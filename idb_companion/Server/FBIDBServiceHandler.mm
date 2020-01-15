@@ -215,13 +215,13 @@ static idb::XctestRunResponse convert_xctest_delta(const FBXCTestDelta *delta, d
 {
   idb::XctestRunResponse response;
   switch (delta.state) {
-    case FBIDBTestManagerStateRunning:
+    case FBIDBTestOperationStateRunning:
       response.set_status(idb::XctestRunResponse_Status_RUNNING);
       break;
-    case FBIDBTestManagerStateTerminatedNormally:
+    case FBIDBTestOperationStateTerminatedNormally:
       response.set_status(idb::XctestRunResponse_Status_TERMINATED_NORMALLY);
       break;
-    case FBIDBTestManagerStateTerminatedAbnormally:
+    case FBIDBTestOperationStateTerminatedAbnormally:
       response.set_status(idb::XctestRunResponse_Status_TERMINATED_ABNORMALLY);
     default:
       break;
@@ -262,7 +262,7 @@ static idb::XctestRunResponse convert_xctest_delta(const FBXCTestDelta *delta, d
   }
   NSString *resultBundlePath = delta.resultBundlePath;
   // Only send result bundle when finished to avoid unnecessary packing for every delta update
-  if ((delta.state == FBIDBTestManagerStateTerminatedNormally || delta.state == FBIDBTestManagerStateTerminatedAbnormally)
+  if ((delta.state == FBIDBTestOperationStateTerminatedNormally || delta.state == FBIDBTestOperationStateTerminatedAbnormally)
    && resultBundlePath) {
     NSError *error = nil;
     NSData *data = [[FBArchiveOperations createGzippedTarDataForPath:resultBundlePath queue:queue logger:logger] block:&error];
@@ -275,17 +275,14 @@ static idb::XctestRunResponse convert_xctest_delta(const FBXCTestDelta *delta, d
   return response;
 }
 
-static id<FBXCTestRunRequest> convert_xctest_request(const idb::XctestRunRequest *request)
+static FBXCTestRunRequest *convert_xctest_request(const idb::XctestRunRequest *request)
 {
-  BOOL isLogicTest = NO;
-  BOOL isUITest = NO;
-  NSString *appBundleID = nil;
-  NSString *testHostAppBundleID = nil;
   NSNumber *testTimeout = @(request->timeout());
   NSArray<NSString *> *arguments = extract_string_array(request->arguments());
   NSDictionary<NSString *, NSString *> *environment = extract_str_dict(request->environment());
   NSMutableSet<NSString *> *testsToRun = nil;
   NSMutableSet<NSString *> *testsToSkip = NSMutableSet.set;
+  NSString *testBundleID = nsstring_from_c_string(request->test_bundle_id());
 
   if (request->tests_to_run_size() > 0) {
     testsToRun = NSMutableSet.set;
@@ -299,38 +296,25 @@ static id<FBXCTestRunRequest> convert_xctest_request(const idb::XctestRunRequest
     [testsToSkip addObject:nsstring_from_c_string(value)];
   }
 
+
   switch (request->mode().mode_case()) {
     case idb::XctestRunRequest_Mode::kLogic: {
-      isLogicTest = YES;
-      break;
+      return [FBXCTestRunRequest logicTestWithTestBundleID:testBundleID environment:environment arguments:arguments testsToRun:testsToRun testsToSkip:testsToSkip testTimeout:testTimeout];
     }
     case idb::XctestRunRequest_Mode::kApplication: {
       const idb::XctestRunRequest::Application application = request->mode().application();
-      appBundleID = nsstring_from_c_string(application.app_bundle_id());
-      break;
+      NSString *appBundleID = nsstring_from_c_string(application.app_bundle_id());
+      return [FBXCTestRunRequest applicationTestWithTestBundleID:testBundleID appBundleID:appBundleID environment:environment arguments:arguments testsToRun:testsToRun testsToSkip:testsToSkip testTimeout:testTimeout];
     }
     case idb::XctestRunRequest_Mode::kUi: {
       const idb::XctestRunRequest::UI ui = request->mode().ui();
-      appBundleID = nsstring_from_c_string(ui.app_bundle_id());
-      testHostAppBundleID = nsstring_from_c_string(ui.test_host_app_bundle_id());
-      isUITest = YES;
-      break;
+      NSString *appBundleID = nsstring_from_c_string(ui.app_bundle_id());
+      NSString *testHostAppBundleID = nsstring_from_c_string(ui.test_host_app_bundle_id());
+      return [FBXCTestRunRequest uiTestWithTestBundleID:testBundleID appBundleID:appBundleID testHostAppBundleID:testHostAppBundleID environment:environment arguments:arguments testsToRun:testsToRun testsToSkip:testsToSkip testTimeout:testTimeout];
     }
     default:
-      break;
+      return nil;
   }
-
-  return [[FBXCTestRunRequest alloc]
-    initWithLogicTest:isLogicTest
-    uiTest:isUITest
-    testBundleID:nsstring_from_c_string(request->test_bundle_id())
-    appBundleID:appBundleID
-    testHostAppBundleID:testHostAppBundleID
-    environment:environment
-    arguments:arguments
-    testsToRun:testsToRun
-    testsToSkip:testsToSkip
-    testTimeout:testTimeout];
 }
 
 static NSPredicate *nspredicate_from_crash_log_query(const idb::CrashLogQuery *request)
@@ -404,7 +388,7 @@ static FBSimulatorHIDEvent *translate_event(idb::HIDEvent &event, NSError **erro
       }
     }
   } else if (event.has_swipe()) {
-    return [FBSimulatorHIDEvent swipe:event.swipe().start().x() yStart:event.swipe().start().y() xEnd:event.swipe().end().x() yEnd:event.swipe().end().y() delta:event.swipe().delta()];
+    return [FBSimulatorHIDEvent swipe:event.swipe().start().x() yStart:event.swipe().start().y() xEnd:event.swipe().end().x() yEnd:event.swipe().end().y() delta:event.swipe().delta() duration:event.swipe().duration()];
   } else if (event.has_delay()) {
     return [FBSimulatorHIDEvent delay:event.delay().duration()];
   }
@@ -918,7 +902,7 @@ Status FBIDBServiceHandler::xctest_list_tests(ServerContext *context, const idb:
 
 Status FBIDBServiceHandler::xctest_run(ServerContext *context, const idb::XctestRunRequest *request, grpc::ServerWriter<idb::XctestRunResponse> *response)
 {@autoreleasepool{
-  id<FBXCTestRunRequest> xctestRunRequest = convert_xctest_request(request);
+  FBXCTestRunRequest *xctestRunRequest = convert_xctest_request(request);
   if (xctestRunRequest == nil) {
     return Status(grpc::StatusCode::INTERNAL, "Failed to convert xctest request");
   }
@@ -934,7 +918,7 @@ Status FBIDBServiceHandler::xctest_run(ServerContext *context, const idb::Xctest
     if (!delta) {
       return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
     }
-    hasFinished = delta.state != FBIDBTestManagerStateRunning;
+    hasFinished = delta.state != FBIDBTestOperationStateRunning;
     idb::XctestRunResponse next = convert_xctest_delta(delta, _target.asyncQueue, _target.logger);
     response->Write(next, grpc::WriteOptions().set_write_through());
     usleep(1000 * 200);
@@ -1124,7 +1108,7 @@ Status FBIDBServiceHandler::instruments_run(grpc::ServerContext *context, grpc::
     response.set_state(idb::InstrumentsRunResponse::State::InstrumentsRunResponse_State_POST_PROCESSING);
     stream->Write(response);
   });
-  NSURL *processed = [[FBInstrumentsManager postProcess:postProcessArguments traceDir:operation.traceDir queue:queue logger:logger] block:&error];
+  NSURL *processed = [[FBInstrumentsOperation postProcess:postProcessArguments traceDir:operation.traceDir queue:queue logger:logger] block:&error];
   pthread_mutex_lock(&mutex);
   finished_writing = YES;
   pthread_mutex_unlock(&mutex);

@@ -45,9 +45,7 @@
   _temporaryDirectory = temporaryDirectory;
   _ports = ports;
   _logger = logger;
-  _instrumentsManager = [FBDeltaUpdateManager instrumentsManagerWithTarget:target];
   _testManager = [FBDeltaUpdateManager xctestManagerWithTarget:self.target bundleStorage:storageManager.xctest temporaryDirectory:temporaryDirectory];
-  _videoManager = [FBDeltaUpdateManager videoManagerForTarget:self.target];
 
   return self;
 }
@@ -379,32 +377,12 @@ static const NSTimeInterval ListTestBundleTimeout = 60.0;
   return [self.target killApplicationWithBundleID:bundleID];
 }
 
-- (FBFuture<NSNull *> *)video_recording_start
-{
-  return [[self.videoManager
-    startSession:NSNull.null]
-    mapReplace:NSNull.null];
-}
-
-- (FBFuture<NSData *> *)video_recording_stop
-{
-  return [[self.videoManager
-    sessionWithIdentifier:nil]
-    onQueue:self.target.workQueue fmap:^(FBDeltaUpdateSession<NSString *> *session) {
-      return [[session
-        terminate]
-        onQueue:self.target.workQueue map:^(NSString *videoFilePath) {
-          return [NSData dataWithContentsOfFile:videoFilePath];
-        }];
-    }];
-}
-
 - (FBFuture<id<FBLaunchedProcess>> *)launch_app:(FBApplicationLaunchConfiguration *)configuration
 {
   return [self.target launchApplication:[configuration withEnvironment:[self.storageManager interpolateEnvironmentReplacements:configuration.environment]]];
 }
 
-- (FBFuture<FBDeltaUpdateSession<FBXCTestDelta *> *> *)xctest_run:(id<FBXCTestRunRequest>)request
+- (FBFuture<FBDeltaUpdateSession<FBXCTestDelta *> *> *)xctest_run:(FBXCTestRunRequest *)request
 {
   return [self.testManager startSession:request];
 }

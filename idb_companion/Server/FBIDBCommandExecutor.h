@@ -10,8 +10,6 @@
 #import <FBControlCore/FBControlCore.h>
 #import <FBSimulatorControl/FBSimulatorControl.h>
 
-#import "FBDeltaUpdateManager+Instruments.h"
-#import "FBDeltaUpdateManager+Video.h"
 #import "FBDeltaUpdateManager+XCTest.h"
 #import "FBXCTestDescriptor.h"
 
@@ -51,16 +49,6 @@ NS_ASSUME_NONNULL_BEGIN
  The xctest manager
  */
 @property (nonatomic, strong, readonly) FBXCTestDeltaUpdateManager *testManager;
-
-/**
- The video manager
- */
-@property (nonatomic, strong, readonly) FBVideoUpdateManager *videoManager;
-
-/**
- The instruments manager
- */
-@property (nonatomic, strong, readonly) FBInstrumentsManager *instrumentsManager;
 
 /**
  The running debugserver
@@ -397,20 +385,6 @@ NS_ASSUME_NONNULL_BEGIN
 - (FBFuture<NSNull *> *)kill_application:(NSString *)bundleID;
 
 /**
- Start recording video of the targets screen
-
- @return a Future that resolves when started.
- */
-- (FBFuture<NSNull *> *)video_recording_start;
-
-/**
- Stop recording video of the targets screen
-
- @return a Future that resolves with the video file.
- */
-- (FBFuture<NSData *> *)video_recording_stop;
-
-/**
  Launch an application
 
  @param configuration the configuration to use.
@@ -448,7 +422,7 @@ NS_ASSUME_NONNULL_BEGIN
  @param request the request to run
  @return a Future that resolves with the xctest session.
  */
-- (FBFuture<FBDeltaUpdateSession<FBXCTestDelta *> *> *)xctest_run:(id<FBXCTestRunRequest>)request;
+- (FBFuture<FBDeltaUpdateSession<FBXCTestDelta *> *> *)xctest_run:(FBXCTestRunRequest *)request;
 
 /**
  Starts the debugserver
