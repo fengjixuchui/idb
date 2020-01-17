@@ -180,29 +180,22 @@ def log_and_handle_exceptions(func):  # pyre-ignore
 
 class GrpcStubClient(IdbClientBase):
     def __init__(
-        self,
-        stub: CompanionServiceStub,
-        companion_info: CompanionInfo,
-        logger: logging.Logger,
+        self, stub: CompanionServiceStub, is_local: bool, logger: logging.Logger
     ) -> None:
         self.stub = stub
-        self.companion_info = companion_info
+        self.is_local = is_local
         self.logger = logger
 
     @classmethod
     @asynccontextmanager
     async def build(
-        cls, companion_info: CompanionInfo, logger: logging.Logger
+        cls, host: str, port: int, is_local: bool, logger: logging.Logger
     ) -> AsyncContextManager["GrpcStubClient"]:
-        channel = Channel(
-            host=companion_info.host,
-            port=companion_info.port,
-            loop=asyncio.get_event_loop(),
-        )
+        channel = Channel(host=host, port=port, loop=asyncio.get_event_loop())
         try:
             yield GrpcStubClient(
                 stub=CompanionServiceStub(channel=channel),
-                companion_info=companion_info,
+                is_local=is_local,
                 logger=logger,
             )
         finally:
@@ -234,7 +227,7 @@ class GrpcStubClient(IdbClientBase):
 
     async def add_media(self, file_paths: List[str]) -> None:
         async with self.stub.add_media.open() as stream:
-            if self.companion_info.is_local:
+            if self.is_local:
                 for file_path in file_paths:
                     await stream.send_message(
                         AddMediaRequest(payload=Payload(file_path=file_path))
@@ -367,7 +360,7 @@ class GrpcStubClient(IdbClientBase):
 
                 else:
                     file_path = str(Path(bundle).resolve(strict=True))
-                    if self.companion_info.is_local:
+                    if self.is_local:
                         # send file_path
                         generator = generate_requests(
                             [InstallRequest(payload=Payload(file_path=file_path))]
@@ -398,7 +391,7 @@ class GrpcStubClient(IdbClientBase):
                     inner=PushRequest.Inner(bundle_id=bundle_id, dst_path=dest_path)
                 )
             )
-            if self.companion_info.is_local:
+            if self.is_local:
                 for src_path in src_paths:
                     await stream.send_message(
                         PushRequest(payload=Payload(file_path=src_path))
@@ -422,11 +415,11 @@ class GrpcStubClient(IdbClientBase):
                 src_path=src_path,
                 # not sending the destination to remote companion
                 # so it streams the file back
-                dst_path=dest_path if self.companion_info.is_local else None,
+                dst_path=dest_path if self.is_local else None,
             )
             await stream.send_message(request)
             await stream.end()
-            if self.companion_info.is_local:
+            if self.is_local:
                 await stream.recv_message()
             else:
                 await drain_untar(generate_bytes(stream), output_path=dest_path)
@@ -627,7 +620,7 @@ class GrpcStubClient(IdbClientBase):
     async def record_video(self, stop: asyncio.Event, output_file: str) -> None:
         self.logger.info(f"Starting connection to backend")
         async with self.stub.record.open() as stream:
-            if self.companion_info.is_local:
+            if self.is_local:
                 self.logger.info(
                     f"Starting video recording to local file {output_file}"
                 )
@@ -643,7 +636,7 @@ class GrpcStubClient(IdbClientBase):
             self.logger.info("Stopping video recording")
             await stream.send_message(RecordRequest(stop=RecordRequest.Stop()))
             await stream.end()
-            if self.companion_info.is_local:
+            if self.is_local:
                 self.logger.info("Video saved at output path")
                 await stream.recv_message()
             else:
@@ -743,7 +736,6 @@ class GrpcClient(IdbClient):
         self.target_udid = target_udid
         self.direct_companion_manager = DirectCompanionManager(logger=self.logger)
         self.local_targets_manager = LocalTargetsManager(logger=self.logger)
-        self.companion_info: Optional[CompanionInfo] = None
 
     async def spawn_notifier(self) -> None:
         if platform == "darwin" and os.path.exists("/usr/local/bin/idb_companion"):
@@ -756,7 +748,7 @@ class GrpcClient(IdbClient):
     async def get_stub(self) -> AsyncContextManager[GrpcStubClient]:
         await self.spawn_notifier()
         try:
-            self.companion_info = self.direct_companion_manager.get_companion_info(
+            companion_info = self.direct_companion_manager.get_companion_info(
                 target_udid=self.target_udid
             )
         except IdbException as e:
@@ -764,12 +756,13 @@ class GrpcClient(IdbClient):
             companion_info = await self.spawn_companion(
                 target_udid=none_throws(self.target_udid)
             )
-            if companion_info:
-                self.companion_info = companion_info
-            else:
+            if companion_info is None:
                 raise e
         async with GrpcStubClient.build(
-            companion_info=none_throws(self.companion_info), logger=self.logger
+            host=companion_info.host,
+            port=companion_info.port,
+            is_local=companion_info.is_local,
+            logger=self.logger,
         ) as stub:
             yield stub
 
