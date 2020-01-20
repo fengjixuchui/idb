@@ -9,12 +9,12 @@ import os
 from abc import ABCMeta, abstractmethod
 from argparse import ArgumentParser, Namespace
 
-from idb.client.grpc import GrpcClient
+from idb.client.grpc import IdbManagementClient as IdbManagementClientGrpc
 from idb.common import plugin
 from idb.common.command import Command
 from idb.common.constants import DEFAULT_DAEMON_GRPC_PORT, DEFAULT_DAEMON_HOST
 from idb.common.logging import log_call
-from idb.common.types import IdbClient
+from idb.common.types import IdbManagementClient
 
 
 class BaseCommand(Command, metaclass=ABCMeta):
@@ -80,11 +80,13 @@ class ConnectingCommand(BaseCommand):
 
     async def _run_impl(self, args: Namespace) -> None:
         udid = vars(args).get("udid")
-        client = GrpcClient(target_udid=udid, logger=self.logger)
+        client = IdbManagementClientGrpc(target_udid=udid, logger=self.logger)
         await self.run_with_client(args=args, client=client)
 
     @abstractmethod
-    async def run_with_client(self, args: Namespace, client: IdbClient) -> None:
+    async def run_with_client(
+        self, args: Namespace, client: IdbManagementClient
+    ) -> None:
         pass
 
 
