@@ -10,20 +10,18 @@ from idb.cli.commands.base import CompanionCommand
 from idb.common.types import IdbClient
 
 
-class AddMediaCommand(CompanionCommand):
+class UrlOpenCommand(CompanionCommand):
     @property
     def description(self) -> str:
-        return "Add photos/videos to the target"
+        return "Open a URL"
 
     @property
     def name(self) -> str:
-        return "add-media"
+        return "open"
 
     def add_parser_arguments(self, parser: ArgumentParser) -> None:
-        parser.add_argument(
-            "file_paths", nargs="+", help="Paths to all media files to add"
-        )
+        parser.add_argument("url", help="URL to launch", type=str)
         super().add_parser_arguments(parser)
 
     async def run_with_client(self, args: Namespace, client: IdbClient) -> None:
-        await client.add_media(file_paths=args.file_paths)
+        await client.open_url(args.url)

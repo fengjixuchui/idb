@@ -5,13 +5,13 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-#import "FBApplicationLaunchStrategy.h"
+#import "FBSimulatorApplicationLaunchStrategy.h"
 
 #import <FBControlCore/FBControlCore.h>
 
 #import <CoreSimulator/SimDevice.h>
 
-#import "FBApplicationLaunchStrategy.h"
+#import "FBSimulatorApplicationLaunchStrategy.h"
 #import "FBSimulatorApplicationOperation.h"
 #import "FBSimulator+Private.h"
 #import "FBSimulator.h"
@@ -26,21 +26,21 @@
 #import "FBProcessLaunchConfiguration+Simulator.h"
 #import "FBSimulatorLaunchCtlCommands.h"
 
-@interface FBApplicationLaunchStrategy ()
+@interface FBSimulatorApplicationLaunchStrategy ()
 
 @property (nonnull, nonatomic, strong, readonly) FBSimulator *simulator;
 
 @end
 
-@interface FBApplicationLaunchStrategy_Bridge : FBApplicationLaunchStrategy
+@interface FBSimulatorApplicationLaunchStrategy_Bridge : FBSimulatorApplicationLaunchStrategy
 
 @end
 
-@interface FBApplicationLaunchStrategy_CoreSimulator : FBApplicationLaunchStrategy
+@interface FBSimulatorApplicationLaunchStrategy_CoreSimulator : FBSimulatorApplicationLaunchStrategy
 
 @end
 
-@implementation FBApplicationLaunchStrategy
+@implementation FBSimulatorApplicationLaunchStrategy
 
 #pragma mark Initializers
 
@@ -95,7 +95,11 @@
   return [[[self.simulator
     installedApplicationWithBundleID:bundleID]
     mapReplace:NSNull.null]
-    rephraseFailure:@"App %@ can't be launched as it isn't installed", bundleID];
+    onQueue:self.simulator.asyncQueue handleError:^(NSError *error) {
+      return [[FBSimulatorError
+        describeFormat:@"App %@ can't be launched as it isn't installed: %@", bundleID, error]
+        failFuture];
+    }];
 }
 
 - (FBFuture<NSNumber *> *)confirmApplicationLaunchState:(NSString *)bundleID launchMode:(FBApplicationLaunchMode)launchMode

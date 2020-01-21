@@ -89,8 +89,10 @@ typedef struct {
   // Using Connections.
   int (*ServiceConnectionGetSocket)(CFTypeRef connection);
   int (*ServiceConnectionInvalidate)(CFTypeRef connection);
-  int (*ServiceConnectionReceive)(CFTypeRef connection, void *buffer, size_t bytes);
-  int (*ServiceConnectionSend)(CFTypeRef connection, void *buffer, size_t bytes);
+  size_t (*ServiceConnectionReceive)(CFTypeRef connection, void *buffer, size_t bytes);
+  int (*ServiceConnectionReceiveMessage)(CFTypeRef connection, CFPropertyListRef *messageOut, CFPropertyListFormat *formatOut, void *unknown0, void *unknown1, void *unknown2);
+  size_t (*ServiceConnectionSend)(CFTypeRef connection, const void *buffer, size_t bytes);
+  int (*ServiceConnectionSendMessage)(CFTypeRef connection, CFPropertyListRef propertyList, CFPropertyListFormat format, void *unknown0, CFDictionaryKeyCallBacks *keyCallbacks, CFDictionaryValueCallBacks *valueCallbacks);
   int (*ServiceConnectionGetSecureIOContext)(CFTypeRef connection);
 
   // Services

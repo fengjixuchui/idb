@@ -4,21 +4,26 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-from argparse import Namespace
+from argparse import ArgumentParser, Namespace
 
 from idb.cli.commands.base import CompanionCommand
 from idb.common.types import IdbClient
 
 
-class DescribeCommand(CompanionCommand):
+class MediaAddCommand(CompanionCommand):
     @property
     def description(self) -> str:
-        return "Describes the Target"
+        return "Add photos/videos to the target"
 
     @property
     def name(self) -> str:
-        return "describe"
+        return "add-media"
+
+    def add_parser_arguments(self, parser: ArgumentParser) -> None:
+        parser.add_argument(
+            "file_paths", nargs="+", help="Paths to all media files to add"
+        )
+        super().add_parser_arguments(parser)
 
     async def run_with_client(self, args: Namespace, client: IdbClient) -> None:
-        description = await client.describe()
-        print(description)
+        await client.add_media(file_paths=args.file_paths)

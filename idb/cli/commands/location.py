@@ -10,18 +10,19 @@ from idb.cli.commands.base import CompanionCommand
 from idb.common.types import IdbClient
 
 
-class OpenUrlCommand(CompanionCommand):
+class LocationSetCommand(CompanionCommand):
     @property
     def description(self) -> str:
-        return "Open a URL"
+        return "Set a simulator's location"
 
     @property
     def name(self) -> str:
-        return "open"
+        return "set-location"
 
     def add_parser_arguments(self, parser: ArgumentParser) -> None:
-        parser.add_argument("url", help="URL to launch", type=str)
+        parser.add_argument("latitude", help="Latitude to set", type=float)
+        parser.add_argument("longitude", help="Longitude to set", type=float)
         super().add_parser_arguments(parser)
 
     async def run_with_client(self, args: Namespace, client: IdbClient) -> None:
-        await client.open_url(args.url)
+        await client.set_location(args.latitude, args.longitude)

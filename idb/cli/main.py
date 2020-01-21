@@ -16,16 +16,13 @@ from idb.cli.commands.accessibility import (
     AccessibilityInfoAllCommand,
     AccessibilityInfoAtPointCommand,
 )
-from idb.cli.commands.add_media import AddMediaCommand
 from idb.cli.commands.app import (
     AppInstallCommand,
+    AppListCommand,
     AppTerminateCommand,
     AppUninstallCommand,
 )
 from idb.cli.commands.approve import ApproveCommand
-from idb.cli.commands.boot import BootCommand
-from idb.cli.commands.clear_keychain import ClearKeychainCommand
-from idb.cli.commands.connect import ConnectCommand, ConnectCommandException
 from idb.cli.commands.contacts import ContactsUpdateCommand
 from idb.cli.commands.crash import (
     CrashDeleteCommand,
@@ -38,8 +35,6 @@ from idb.cli.commands.debugserver import (
     DebugServerStatusCommand,
     DebugServerStopCommand,
 )
-from idb.cli.commands.describe import DescribeCommand
-from idb.cli.commands.disconnect import DisconnectCommand
 from idb.cli.commands.dsym import DsymInstallCommand
 from idb.cli.commands.dylib import DylibInstallCommand
 from idb.cli.commands.file import (
@@ -63,15 +58,23 @@ from idb.cli.commands.hid import (
     TextCommand,
 )
 from idb.cli.commands.instruments import InstrumentsCommand
+from idb.cli.commands.keychain import KeychainClearCommand
 from idb.cli.commands.kill import KillCommand
 from idb.cli.commands.launch import LaunchCommand
-from idb.cli.commands.list_apps import ListAppsCommand
-from idb.cli.commands.list_targets import ListTargetsCommand
+from idb.cli.commands.location import LocationSetCommand
 from idb.cli.commands.log import CompanionLogCommand, LogCommand
-from idb.cli.commands.open_url import OpenUrlCommand
+from idb.cli.commands.media import MediaAddCommand
 from idb.cli.commands.record import RecordVideoCommand
 from idb.cli.commands.screenshot import ScreenshotCommand
-from idb.cli.commands.set_location import SetLocationCommand
+from idb.cli.commands.target import (
+    ConnectCommandException,
+    TargetBootCommand,
+    TargetConnectCommand,
+    TargetDescribeCommand,
+    TargetDisconnectCommand,
+    TargetListCommand,
+)
+from idb.cli.commands.url import UrlOpenCommand
 from idb.cli.commands.xctest import (
     XctestInstallCommand,
     XctestListTestsCommand,
@@ -113,10 +116,9 @@ async def gen_main(cmd_input: Optional[List[str]] = None,) -> int:
         help="A string of the form HOSTNAME:PORT that will describe the companion connect to",
     )
     commands: List[Command] = [
-        DescribeCommand(),
         AppInstallCommand(),
         AppUninstallCommand(),
-        ListAppsCommand(),
+        AppListCommand(),
         LaunchCommand(),
         AppTerminateCommand(),
         CommandGroup(
@@ -155,13 +157,15 @@ async def gen_main(cmd_input: Optional[List[str]] = None,) -> int:
         RecordVideoCommand(),
         DeprecatedPushCommand(),
         DeprecatedPullCommand(),
-        OpenUrlCommand(),
-        ClearKeychainCommand(),
-        SetLocationCommand(),
+        UrlOpenCommand(),
+        KeychainClearCommand(),
+        LocationSetCommand(),
         ApproveCommand(),
-        ConnectCommand(),
-        DisconnectCommand(),
-        ListTargetsCommand(),
+        TargetConnectCommand(),
+        TargetDisconnectCommand(),
+        TargetListCommand(),
+        TargetDescribeCommand(),
+        TargetBootCommand(),
         DaemonCommand(),
         ScreenshotCommand(),
         CommandGroup(
@@ -185,9 +189,8 @@ async def gen_main(cmd_input: Optional[List[str]] = None,) -> int:
         ),
         InstrumentsCommand(),
         KillCommand(),
-        AddMediaCommand(),
+        MediaAddCommand(),
         FocusCommand(),
-        BootCommand(),
         CommandGroup(
             name="debugserver",
             description="debugserver interactions",

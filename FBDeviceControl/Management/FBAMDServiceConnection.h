@@ -41,13 +41,38 @@ typedef CFTypeRef AMDServiceConnectionRef;
 #pragma mark Public
 
 /**
- receive from the connection.
+ Synchronously send bytes on the connection.
 
- @param size the length in bytes to receive.
+ @param size the length in bytes of data to receive.
+ @param error an error out for any error that occurs.
+ @return YES if the bytes were sent, NO otherwise.
+ */
+- (BOOL)send:(NSData *)data error:(NSError **)error;
+
+/**
+ Synchronously recieve a plist-based packet used by lockdown.
+
+ @param message the message to send.
+ @param error an error out for any error that occurs.
+ @return YES if the message was sent, NO otherwise.
+ */
+- (BOOL)sendMessage:(id)message error:(NSError **)error;
+
+/**
+ Synchronously receive bytes from the connection.
+
  @param error an error out for any error that occurs.
  @return the data.
  */
 - (NSData *)receive:(size_t)size error:(NSError **)error;
+
+/**
+ Synchronously recieve a plist-based packet used by lockdown.
+
+ @param error an error out for any error that occurs.
+ @return the read plist.
+ */
+- (id)receiveMessageWithError:(NSError **)error;
 
 /**
  Invalidates the Service connection.
