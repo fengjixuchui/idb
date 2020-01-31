@@ -8,6 +8,7 @@ import argparse
 import asyncio
 import concurrent.futures
 import logging
+import os
 import sys
 from typing import List, Optional, Set
 
@@ -96,6 +97,8 @@ logger: logging.Logger = logging.getLogger()
 
 
 async def gen_main(cmd_input: Optional[List[str]] = None,) -> int:
+    # Make sure all files are created with global rw permissions
+    os.umask(0o011)
     # Setup parser
     parser = argparse.ArgumentParser(
         description="idb: a versatile tool to communicate with iOS Simulators and Devices",
@@ -234,18 +237,20 @@ async def gen_main(cmd_input: Optional[List[str]] = None,) -> int:
         await root_command.run(args)
         return 0
     except ConnectCommandException as e:
-        print(str(e))
+        print(str(e), file=sys.stderr)
         return 1
     except IdbException as e:
-        print(e.args[0])
+        print(e.args[0], file=sys.stderr)
         return 1
     except Exception:
         logger.exception("Exception thrown in main")
         return 1
     finally:
         await plugin.on_close(logger)
-        pending = set(asyncio.Task.all_tasks())
-        pending.discard(asyncio.Task.current_task())
+        pending = set(asyncio.all_tasks())
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            pending.discard(current_task)
         await drain_coroutines(pending)
 
 
