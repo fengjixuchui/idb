@@ -110,7 +110,7 @@ static size_t ReadBufferSize = 1024 * 4;
   if (result != 0) {
     return [[FBDeviceControlError
       describeFormat:@"Failed to send message %@, code %d", message, result]
-      fail:error];
+      failBool:error];
   }
   return YES;
 }
@@ -125,6 +125,25 @@ static size_t ReadBufferSize = 1024 * 4;
       fail:error];
   }
   return CFBridgingRelease(message);
+}
+
+#pragma mark Streams
+
+- (FBFuture<NSNull *> *)consume:(id<FBDataConsumer>)consumer onQueue:(dispatch_queue_t)queue
+{
+  return [FBFuture
+    onQueue:queue resolve:^{
+      void *buffer = alloca(ReadBufferSize);
+      while (true) {
+        size_t readBytes = self.calls.ServiceConnectionReceive(self.connection, buffer, ReadBufferSize);
+        if (readBytes < 1) {
+          [consumer consumeEndOfFile];
+          return FBFuture.empty;
+        }
+        NSData *data = [[NSData alloc] initWithBytes:buffer length:readBytes];
+        [consumer consumeData:data];
+      }
+    }];
 }
 
 #pragma mark Lifecycle
