@@ -178,9 +178,11 @@
   if (!transport) {
     return [FBFutureContext futureContextWithError:error];
   }
-  return [[FBFuture futureWithResult:transport] onQueue:self.workQueue contextualTeardown:^(id _, FBFutureState __) {
-    [transport closeFile];
-    return FBFuture.empty;
+  return [[FBFuture
+    futureWithResult:@(transport.fileDescriptor)]
+    onQueue:self.workQueue contextualTeardown:^(id _, FBFutureState __) {
+      [transport closeFile];
+      return FBFuture.empty;
   }];
 }
 
@@ -318,7 +320,7 @@
   return [FBFuture futureWithResult:[NSNull null]];
 }
 
-- (FBFuture<NSNumber *> *)launchApplication:(nonnull FBApplicationLaunchConfiguration *)configuration
+- (FBFuture<id<FBLaunchedProcess>> *)launchApplication:(FBApplicationLaunchConfiguration *)configuration
 {
   FBProductBundle *product = self.bundleIDToProductMap[configuration.bundleID];
   if (!product) {
@@ -329,9 +331,9 @@
     withArguments:configuration.arguments]
     withEnvironment:configuration.environment]
     start]
-    onQueue:self.workQueue map:^(FBTask *task) {
+    onQueue:self.workQueue map:^ id<FBLaunchedProcess> (FBTask *task) {
       self.bundleIDToRunningTask[product.bundleID] = task;
-      return @(task.processIdentifier);
+      return task;
     }];
 }
 
