@@ -75,14 +75,11 @@ class CompanionSpawner:
             )
             self.pid_saver.save_companion_pid(pid=process.pid)
             logging.debug(f"started companion at process id {process.pid}")
-            if process.stdout:
-                # pyre-fixme[6]: Expected `StreamReader` for 1st param but got
-                #  `Optional[StreamReader]`.
-                port = await self._read_stream(process.stdout)
-                if not port:
-                    raise CompanionSpawnerException("failed to spawn companion")
-                return port
-            raise CompanionSpawnerException("process has no stdout")
+            stdout = none_throws(process.stdout)
+            port = await self._read_stream(stdout)
+            if not port:
+                raise CompanionSpawnerException("failed to spawn companion")
+            return port
 
     def _is_notifier_running(self) -> bool:
         pid = self.pid_saver.get_notifier_pid()
@@ -101,19 +98,20 @@ class CompanionSpawner:
             return False
 
     async def spawn_notifier(self) -> None:
-        if not self._is_notifier_running():
-            self.check_okay_to_spawn()
-            cmd: List[str] = [self.companion_path, "--notify", IDB_LOCAL_TARGETS_FILE]
+        if self._is_notifier_running():
+            return
 
-            with open(self._log_file_path("notifier"), "a") as log_file:
-                process = await asyncio.create_subprocess_exec(
-                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=log_file
-                )
-                self.pid_saver.save_notifier_pid(pid=process.pid)
-                await asyncio.ensure_future(
-                    self._read_notifier_output(stream=none_throws(process.stdout))
-                )
-                logging.debug(f"started notifier at process id {process.pid}")
+        self.check_okay_to_spawn()
+        cmd = [self.companion_path, "--notify", IDB_LOCAL_TARGETS_FILE]
+        with open(self._log_file_path("notifier"), "a") as log_file:
+            process = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=log_file
+            )
+            self.pid_saver.save_notifier_pid(pid=process.pid)
+            await asyncio.ensure_future(
+                self._read_notifier_output(stream=none_throws(process.stdout))
+            )
+            logging.debug(f"started notifier at process id {process.pid}")
 
     async def _read_notifier_output(self, stream: StreamReader) -> None:
         while True:
