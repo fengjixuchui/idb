@@ -14,6 +14,7 @@ from typing import List
 
 from idb.client.pid_saver import PidSaver
 from idb.common.constants import IDB_LOCAL_TARGETS_FILE, IDB_LOGS_PATH
+from idb.common.file import get_last_n_lines
 from idb.utils.typing import none_throws
 
 
@@ -47,8 +48,6 @@ class CompanionSpawner:
         return IDB_LOGS_PATH + "/" + target_udid
 
     def check_okay_to_spawn(self) -> None:
-        if not self.companion_path:
-            raise CompanionSpawnerException("companion_path not set")
         if os.getuid() == 0:
             logging.warning(
                 "idb should not be run as root. "
@@ -66,7 +65,8 @@ class CompanionSpawner:
             "0",
         ]
 
-        with open(self._log_file_path(target_udid), "a") as log_file:
+        log_file_path = self._log_file_path(target_udid)
+        with open(log_file_path, "a") as log_file:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -78,7 +78,10 @@ class CompanionSpawner:
             stdout = none_throws(process.stdout)
             port = await self._read_stream(stdout)
             if not port:
-                raise CompanionSpawnerException("failed to spawn companion")
+                raise CompanionSpawnerException(
+                    f"Failed to spawn companion, "
+                    f"stderr: {get_last_n_lines(log_file_path, 30)}"
+                )
             return port
 
     def _is_notifier_running(self) -> bool:
@@ -116,9 +119,8 @@ class CompanionSpawner:
     async def _read_notifier_output(self, stream: StreamReader) -> None:
         while True:
             line = await stream.readline()
-            if line:
-                update = json.loads(line.decode())
-                if update["report_initial_state"]:
-                    return
-            else:
+            if line is None:
+                return
+            update = json.loads(line.decode())
+            if update["report_initial_state"]:
                 return
