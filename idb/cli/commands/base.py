@@ -17,22 +17,14 @@ from idb.client.grpc import (
 from idb.common import plugin
 from idb.common.command import Command
 from idb.common.constants import DEFAULT_DAEMON_GRPC_PORT, DEFAULT_DAEMON_HOST
-from idb.common.logging import log_call
 from idb.common.types import IdbClient, IdbManagementClient
+from idb.grpc.logging import log_call
 from idb.utils.contextlib import asynccontextmanager
 
 
 def _parse_companion_info(value: str) -> Tuple[str, int]:
     (host, port) = value.rsplit(":", 1)
     return (host, int(port))
-
-
-@asynccontextmanager
-async def _get_management_client(
-    args: Namespace, logger: logging.Logger
-) -> AsyncContextManager[IdbManagementClient]:
-    udid = vars(args).get("udid")
-    yield IdbManagementClientGrpc(target_udid=udid, logger=logger)
 
 
 @asynccontextmanager
@@ -47,7 +39,9 @@ async def _get_client(
         ) as client:
             yield client
     else:
-        async with _get_management_client(args=args, logger=logger) as client:
+        async with IdbManagementClientGrpc(
+            logger=logger, companion_path=args.companion_path
+        ).from_udid(udid=vars(args).get("udid")) as client:
             yield client
 
 
@@ -140,8 +134,12 @@ class ManagementCommand(BaseCommand):
         super().add_parser_arguments(parser)
 
     async def _run_impl(self, args: Namespace) -> None:
-        async with _get_management_client(args=args, logger=self.logger) as client:
-            await self.run_with_client(args=args, client=client)
+        await self.run_with_client(
+            args=args,
+            client=IdbManagementClientGrpc(
+                logger=self.logger, companion_path=args.companion_path
+            ),
+        )
 
     @abstractmethod
     async def run_with_client(

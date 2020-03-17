@@ -24,17 +24,21 @@
 
 const char *kUsageHelpMessage = "\
 Usage: \n \
-  --udid UDID                Will attach to a device/simulator with the specified UDID \n \
-  --boot UDID                Will boot a simulator with the specified UDID \n \
-  --debug-port PORT          Port to connect debugger on (default: 10881) \n \
-  --grpc-port PORT           Port to start GRPC on (default: 10882) \n \
-  --log-file-path PATH       Path to write a log file to e.g ./output.log (default: logs to stdErr) \n \
-  --device-set-path PATH     Path to the custom device set if used \n \
-  --notify PATH              Path to file to write updates about available targets \n \
-  --terminate-offline VALUE  Terminate if the target goes offline, otherwise the companion will stay alive\n \
-  --create VALUE             Create a simulator value should look like \"iPhone X, iOS 12.4\"\n \
-  --delete-all               Deletes all simulators \n \
-  --help                     Show this help message and exit \n";
+  Modes of operation, only one of these may be specified:\n \
+    --udid UDID                Launches a companion server for the specified UDID.\n\
+    --boot UDID                Boots the simulator with the specified UDID.\n\
+    --shutdown UDID            Shuts down the simulator with the specified UDID.\n\
+    --delete-all               Deletes all simulators in the device set.\n\
+    --create VALUE             Creates a simulator using the VALUE argument like \"iPhone X, iOS 12.4\"\n\
+    --notify PATH              Launches a companionn notifier which will stream availability updates to the specified path.\n\
+    --help                     Show this help message and exit.\n\
+\n\
+  Options:\n\
+    --grpc-port PORT           Port to start the grpc companion server on (default: 10882).\n\
+    --debug-port PORT          Port to connect debugger on (default: 10881).\n\
+    --log-file-path PATH       Path to write a log file to e.g ./output.log (default: logs to stdErr).\n\
+    --device-set-path PATH     Path to a custom Simulator device set.\n\
+    --terminate-offline VALUE  Terminate if the target goes offline, otherwise the companion will stay alive.\n";
 
 static BOOL shouldPrintUsage(void) {
   return [NSProcessInfo.processInfo.arguments containsObject:@"--help"];
@@ -53,12 +57,29 @@ static FBFuture<NSNull *> *TargetOfflineFuture(id<FBiOSTarget> target, id<FBCont
     mapReplace:NSNull.null];
 }
 
+static FBFuture<NSNull *> *ShutdownFuture(NSString *udid, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
+{
+  NSError *error = nil;
+  id<FBiOSTarget> target = [FBiOSTargetProvider targetWithUDID:udid logger:logger reporter:reporter error:&error];
+  if (!target) {
+    return [FBFuture futureWithError:error];
+  }
+  id<FBSimulatorLifecycleCommands> commands = (id<FBSimulatorLifecycleCommands>) target;
+  if (![commands conformsToProtocol:@protocol(FBSimulatorLifecycleCommands)]) {
+    return [[FBIDBError
+      describeFormat:@"%@ does not support shutdown", commands]
+      failFuture];
+  }
+  return [commands shutdown];
+}
+
 static FBFuture<FBFuture<NSNull *> *> *GetCompanionCompletedFuture(int argc, const char *argv[], NSUserDefaults *userDefaults, FBIDBLogger *logger) {
   NSString *udid = [userDefaults stringForKey:@"-udid"];
   NSString *notifyFilePath = [userDefaults stringForKey:@"-notify"];
   NSString *boot = [userDefaults stringForKey:@"-boot"];
   NSString *create = [userDefaults stringForKey:@"-create"];
   NSString *delete = [userDefaults stringForKey:@"-delete"];
+  NSString *shutdown = [userDefaults stringForKey:@"-shutdown"];
   BOOL terminateOffline = [userDefaults boolForKey:@"-terminate-offline"];
 
   NSError *error = nil;
@@ -108,6 +129,9 @@ static FBFuture<FBFuture<NSNull *> *> *GetCompanionCompletedFuture(int argc, con
   } else if (boot) {
     [logger.info log:@"Booting target"];
     return [FBFuture futureWithResult:[[FBBootManager bootManagerForLogger:logger] boot:boot]];
+  } else if(shutdown) {
+    [logger.info logFormat:@"Shutting down %@", shutdown];
+    return [FBFuture futureWithResult:ShutdownFuture(shutdown, logger, reporter)];
   } else if (create || delete) {
     NSString *deviceSetPath = [userDefaults stringForKey:@"-device-set-path"];
     FBSimulatorControlConfiguration *configuration = [FBSimulatorControlConfiguration configurationWithDeviceSetPath:deviceSetPath options:0 logger:logger reporter:reporter];

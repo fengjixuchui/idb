@@ -109,13 +109,15 @@ class DirectCompanionManager:
 
     async def get_companion_info(self, target_udid: Optional[str]) -> CompanionInfo:
         async with self._use_stored_companions() as companions:
-            matching = [
-                companion for companion in companions if companion.udid == target_udid
-            ]
             # If we get a target by udid we expect only one value.
             if target_udid is not None:
+                matching = [
+                    companion
+                    for companion in companions
+                    if companion.udid == target_udid
+                ]
                 if len(matching) == 1:
-                    return companions[0]
+                    return matching[0]
                 elif len(matching) > 1:
                     raise IdbException(
                         f"More than one companion matching udid {target_udid}: {matching}"
@@ -125,15 +127,15 @@ class DirectCompanionManager:
                         f"No companion for {target_udid}, existing {companions}"
                     )
             # With no udid provided make sure there is only a single match
-            elif len(matching) == 1:
+            elif len(companions) == 1:
                 companion = companions[0]
                 self.logger.info(
                     f"Using sole default companion with udid {companion.udid}"
                 )
                 return companion
-            elif len(matching) > 1:
+            elif len(companions) > 1:
                 raise IdbException(
-                    f"No UDID provided there's multiple companion ambiguity: {matching}"
+                    f"No UDID provided and there's multiple companions: {companions}"
                 )
             else:
                 raise IdbException("No UDID provided and no companions exist")

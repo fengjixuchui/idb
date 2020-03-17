@@ -416,8 +416,7 @@ class IdbClient:
         pass
 
 
-# Extends the base by adding management related commands
-class IdbManagementClient(IdbClient):
+class IdbManagementClient:
     async def connect(
         self,
         destination: ConnectionDestination,
@@ -431,7 +430,7 @@ class IdbManagementClient(IdbClient):
     async def list_targets(self) -> List[TargetDescription]:
         pass
 
-    async def boot(self) -> None:
+    async def boot(self, udid: str) -> None:
         pass
 
     async def kill(self) -> None:
