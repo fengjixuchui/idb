@@ -433,6 +433,12 @@ class IdbManagementClient:
     async def boot(self, udid: str) -> None:
         pass
 
+    async def shutdown(self, udid: str) -> None:
+        pass
+
+    async def erase(self, udid: str) -> None:
+        pass
+
     async def kill(self) -> None:
         pass
 

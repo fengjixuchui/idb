@@ -20,15 +20,15 @@
 #import "FBiOSTargetStateChangeNotifier.h"
 #import "FBStorageUtils.h"
 #import "FBTemporaryDirectory.h"
-#import "FBSimulatorsManager.h"
 
 const char *kUsageHelpMessage = "\
 Usage: \n \
-  Modes of operation, only one of these may be specified:\n \
+  Modes of operation, only one of these may be specified:\n\
     --udid UDID                Launches a companion server for the specified UDID.\n\
     --boot UDID                Boots the simulator with the specified UDID.\n\
     --shutdown UDID            Shuts down the simulator with the specified UDID.\n\
-    --delete-all               Deletes all simulators in the device set.\n\
+    --erase UDID               Erases the simulator with the specified UDID.\n\
+    --delete UDID|all          Deletes the simulator with the specified UDID, or 'all' to delete all simulators in the set. \n\
     --create VALUE             Creates a simulator using the VALUE argument like \"iPhone X, iOS 12.4\"\n\
     --notify PATH              Launches a companionn notifier which will stream availability updates to the specified path.\n\
     --help                     Show this help message and exit.\n\
@@ -42,6 +42,34 @@ Usage: \n \
 
 static BOOL shouldPrintUsage(void) {
   return [NSProcessInfo.processInfo.arguments containsObject:@"--help"];
+}
+
+static FBFuture<FBSimulatorSet *> *SimulatorSet(NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
+{
+  NSString *deviceSetPath = [userDefaults stringForKey:@"-device-set-path"];
+  FBSimulatorControlConfiguration *configuration = [FBSimulatorControlConfiguration configurationWithDeviceSetPath:deviceSetPath options:0 logger:logger reporter:reporter];
+  NSError *error = nil;
+  FBSimulatorControl *control = [FBSimulatorControl withConfiguration:configuration error:&error];
+  if (!control) {
+    return [FBFuture futureWithError:error];
+  }
+  return [FBFuture futureWithResult:control.set];
+}
+
+static FBFuture<id<FBSimulatorLifecycleCommands>> *LifecycleCommandsFuture(NSString *udid, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
+{
+  NSError *error = nil;
+  id<FBiOSTarget> target = [FBiOSTargetProvider targetWithUDID:udid logger:logger reporter:reporter error:&error];
+  if (!target) {
+    return [FBFuture futureWithError:error];
+  }
+  id<FBSimulatorLifecycleCommands> commands = (id<FBSimulatorLifecycleCommands>) target;
+  if (![commands conformsToProtocol:@protocol(FBSimulatorLifecycleCommands)]) {
+    return [[FBIDBError
+      describeFormat:@"%@ does not support shutdown", commands]
+      failFuture];
+  }
+  return [FBFuture futureWithResult:commands];
 }
 
 static FBFuture<NSNull *> *TargetOfflineFuture(id<FBiOSTarget> target, id<FBControlCoreLogger> logger)
@@ -59,18 +87,53 @@ static FBFuture<NSNull *> *TargetOfflineFuture(id<FBiOSTarget> target, id<FBCont
 
 static FBFuture<NSNull *> *ShutdownFuture(NSString *udid, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
 {
-  NSError *error = nil;
-  id<FBiOSTarget> target = [FBiOSTargetProvider targetWithUDID:udid logger:logger reporter:reporter error:&error];
-  if (!target) {
-    return [FBFuture futureWithError:error];
-  }
-  id<FBSimulatorLifecycleCommands> commands = (id<FBSimulatorLifecycleCommands>) target;
-  if (![commands conformsToProtocol:@protocol(FBSimulatorLifecycleCommands)]) {
-    return [[FBIDBError
-      describeFormat:@"%@ does not support shutdown", commands]
-      failFuture];
-  }
-  return [commands shutdown];
+  return [LifecycleCommandsFuture(udid, logger, reporter)
+    onQueue:dispatch_get_main_queue() fmap:^(id<FBSimulatorLifecycleCommands> commands) {
+      return [commands shutdown];
+    }];
+}
+
+static FBFuture<NSNull *> *EraseFuture(NSString *udid, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
+{
+  return [LifecycleCommandsFuture(udid, logger, reporter)
+    onQueue:dispatch_get_main_queue() fmap:^(id<FBSimulatorLifecycleCommands> commands) {
+      return [commands erase];
+    }];
+}
+
+static FBFuture<NSNull *> *DeleteFuture(NSString *udidOrAll, NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
+{
+  return [[SimulatorSet(userDefaults, logger, reporter)
+    onQueue:dispatch_get_main_queue() fmap:^ FBFuture * (FBSimulatorSet *set) {
+      if ([udidOrAll.lowercaseString isEqualToString:@"all"]) {
+        return [set deleteAll];
+      }
+      NSArray<FBSimulator *> *simulators = [set query:[FBiOSTargetQuery udid:udidOrAll]];
+      if (simulators.count != 1) {
+        return [[FBIDBError
+          describeFormat:@"Could not find a simulator with udid %@ got %@", udidOrAll, [FBCollectionInformation oneLineDescriptionFromArray:simulators]]
+          failFuture];
+      }
+      return [set deleteSimulator:simulators.firstObject];
+    }]
+    mapReplace:NSNull.null];
+}
+
+static FBFuture<NSNull *> *CreateFuture(NSString *create, NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
+{
+  return [[SimulatorSet(userDefaults, logger, reporter)
+    onQueue:dispatch_get_main_queue() fmap:^ FBFuture<FBSimulator *> * (FBSimulatorSet *set) {
+      NSArray<NSString *> *parameters = [create componentsSeparatedByString:@","];
+      FBSimulatorConfiguration *config = [FBSimulatorConfiguration defaultConfiguration];
+      if (parameters.count > 0) {
+        config = [config withDeviceModel:parameters[0]];
+      }
+      if (parameters.count > 1) {
+        config = [config withOSNamed:parameters[1]];
+      }
+      return [set createSimulatorWithConfiguration:config];
+    }]
+    mapReplace:NSNull.null];
 }
 
 static FBFuture<FBFuture<NSNull *> *> *GetCompanionCompletedFuture(int argc, const char *argv[], NSUserDefaults *userDefaults, FBIDBLogger *logger) {
@@ -78,8 +141,9 @@ static FBFuture<FBFuture<NSNull *> *> *GetCompanionCompletedFuture(int argc, con
   NSString *notifyFilePath = [userDefaults stringForKey:@"-notify"];
   NSString *boot = [userDefaults stringForKey:@"-boot"];
   NSString *create = [userDefaults stringForKey:@"-create"];
-  NSString *delete = [userDefaults stringForKey:@"-delete"];
   NSString *shutdown = [userDefaults stringForKey:@"-shutdown"];
+  NSString *erase = [userDefaults stringForKey:@"-erase"];
+  NSString *delete = [userDefaults stringForKey:@"-delete"];
   BOOL terminateOffline = [userDefaults boolForKey:@"-terminate-offline"];
 
   NSError *error = nil;
@@ -132,32 +196,19 @@ static FBFuture<FBFuture<NSNull *> *> *GetCompanionCompletedFuture(int argc, con
   } else if(shutdown) {
     [logger.info logFormat:@"Shutting down %@", shutdown];
     return [FBFuture futureWithResult:ShutdownFuture(shutdown, logger, reporter)];
-  } else if (create || delete) {
-    NSString *deviceSetPath = [userDefaults stringForKey:@"-device-set-path"];
-    FBSimulatorControlConfiguration *configuration = [FBSimulatorControlConfiguration configurationWithDeviceSetPath:deviceSetPath options:0 logger:logger reporter:reporter];
-    FBSimulatorsManager *manager = [[FBSimulatorsManager alloc] initWithSimulatorControlConfiguration:configuration];
-    if (create) {
-      NSArray<NSString *> *parameters = [create componentsSeparatedByString:@","];
-      NSString *name = nil;
-      NSString *osName = nil;
-      if (parameters.count > 0) {
-        name = [parameters objectAtIndex:0];
-      }
-      if (parameters.count > 1) {
-        osName = [parameters objectAtIndex:1];
-      }
-      return [FBFuture futureWithResult:[manager createSimulatorWithName:name withOSName:osName]];
-    } else if (delete) {
-      if ([delete isEqualToString:@"all"]) {
-        return [FBFuture futureWithResult:[manager deleteAll]];
-      } else {
-        return [FBFuture futureWithResult:[manager deleteSimulator:delete]];
-      }
-    }
+  } else if (erase) {
+    [logger.info logFormat:@"Erasing %@", erase];
+    return [FBFuture futureWithResult:EraseFuture(erase, logger, reporter)];
+  } else if (delete) {
+    [logger.info logFormat:@"Deleting %@", delete];
+    return [FBFuture futureWithResult:DeleteFuture(delete, userDefaults, logger, reporter)];
+  } else if (create) {
+    [logger.info logFormat:@"Creating %@", create];
+    return [FBFuture futureWithResult:CreateFuture(create, userDefaults, logger, reporter)];
   }
-
-  return [[FBIDBError
-    describeFormat:@"Please select the companion mode you want. \n--udid for attaching to a specific target. \n--boot to boot a specific target. or \n--notify to notify idb daemon of targets available \n\n%s", kUsageHelpMessage]
+  return [[[FBIDBError
+    describeFormat:@"You must specify at least one 'Mode of operation'\n\n%s", kUsageHelpMessage]
+    noLogging]
     failFuture];
 }
 
