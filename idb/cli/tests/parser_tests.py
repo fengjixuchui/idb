@@ -6,6 +6,7 @@
 
 import asyncio
 import os
+import sys
 from argparse import Namespace
 from typing import Any, Tuple, TypeVar
 from unittest.mock import ANY, MagicMock, patch
@@ -17,6 +18,7 @@ from idb.utils.testing import AsyncContextManagerMock, AsyncMock, TestCase
 
 
 T = TypeVar("T")
+COMPANION_PATH = "/usr/local/bin/idb_companion" if sys.platform == "darwin" else None
 
 
 class AsyncGeneratorMock(AsyncMock):
@@ -92,6 +94,17 @@ class TestParser(TestCase):
         udid = "my udid"
         await cli_main(cmd_input=["erase", udid])
         self.management_client_mock().erase.assert_called_once_with(udid=udid)
+
+    async def test_delete(self) -> None:
+        self.management_client_mock().delete = AsyncMock()
+        udid = "my udid"
+        await cli_main(cmd_input=["delete", udid])
+        self.management_client_mock().delete.assert_called_once_with(udid=udid)
+
+    async def test_delete(self) -> None:
+        self.management_client_mock().delete = AsyncMock()
+        await cli_main(cmd_input=["delete-all"])
+        self.management_client_mock().delete.assert_called_once_with(udid=None)
 
     async def test_install(self) -> None:
         self.direct_client_mock.install = MagicMock(return_value=AsyncGeneratorMock())
@@ -348,7 +361,7 @@ class TestParser(TestCase):
 
     def xctest_run_namespace(self, command: str, test_bundle_id: str) -> Namespace:
         namespace = Namespace()
-        namespace.companion_path = "/usr/local/bin/idb_companion"
+        namespace.companion_path = COMPANION_PATH
         namespace.companion = None
         namespace.log_level = "WARNING"
         namespace.log_level_deprecated = None
@@ -365,9 +378,6 @@ class TestParser(TestCase):
             namespace.tests_to_run = None
         namespace.run = command
         namespace.test_bundle_id = test_bundle_id
-        namespace.daemon_port = 9888
-        namespace.daemon_grpc_port = 9889
-        namespace.daemon_host = "localhost"
         namespace.result_bundle_path = None
         return namespace
 
@@ -384,7 +394,6 @@ class TestParser(TestCase):
             )
             namespace = self.xctest_run_namespace("app", test_bundle_id)
             namespace.app_bundle_id = app_under_test_id
-            namespace.force = False
             namespace.timeout = XCTEST_TIMEOUT
             mock.assert_called_once_with(namespace)
 
@@ -410,7 +419,6 @@ class TestParser(TestCase):
             namespace = self.xctest_run_namespace("ui", test_bundle_id)
             namespace.app_bundle_id = app_under_test_id
             namespace.test_host_app_bundle_id = test_host_app_bundle_id
-            namespace.force = False
             namespace.timeout = XCTEST_TIMEOUT
             mock.assert_called_once_with(namespace)
 
@@ -424,7 +432,6 @@ class TestParser(TestCase):
             await cli_main(cmd_input=["xctest", "run", "logic", test_bundle_id])
             namespace = self.xctest_run_namespace("logic", test_bundle_id)
             namespace.timeout = XCTEST_TIMEOUT
-            namespace.force = False
             mock.assert_called_once_with(namespace)
 
     async def test_xctest_list(self) -> None:
@@ -449,7 +456,7 @@ class TestParser(TestCase):
             grpc_port = 1235
             await cli_main(cmd_input=["daemon", "--daemon-grpc-port", str(grpc_port)])
             namespace = Namespace()
-            namespace.companion_path = "/usr/local/bin/idb_companion"
+            namespace.companion_path = COMPANION_PATH
             namespace.companion = None
             namespace.daemon_port = port
             namespace.daemon_grpc_port = grpc_port
@@ -474,7 +481,7 @@ class TestParser(TestCase):
         with patch("idb.cli.commands.log.LogCommand._run_impl", new=mock, create=True):
             await cli_main(cmd_input=["log", "--udid", "1234"])
             namespace = Namespace()
-            namespace.companion_path = "/usr/local/bin/idb_companion"
+            namespace.companion_path = COMPANION_PATH
             namespace.companion = None
             namespace.log_level = "WARNING"
             namespace.log_level_deprecated = None
@@ -482,10 +489,6 @@ class TestParser(TestCase):
             namespace.udid = "1234"
             namespace.json = False
             namespace.log_arguments = []
-            namespace.daemon_port = 9888
-            namespace.daemon_grpc_port = 9889
-            namespace.daemon_host = "localhost"
-            namespace.force = False
             mock.assert_called_once_with(namespace)
 
     async def test_log_arguments(self) -> None:
@@ -493,7 +496,7 @@ class TestParser(TestCase):
         with patch("idb.cli.commands.log.LogCommand._run_impl", new=mock, create=True):
             await cli_main(cmd_input=["log", "--", "--style", "json"])
             namespace = Namespace()
-            namespace.companion_path = "/usr/local/bin/idb_companion"
+            namespace.companion_path = COMPANION_PATH
             namespace.companion = None
             namespace.log_level = "WARNING"
             namespace.log_level_deprecated = None
@@ -501,10 +504,6 @@ class TestParser(TestCase):
             namespace.udid = None
             namespace.json = False
             namespace.log_arguments = ["--", "--style", "json"]
-            namespace.daemon_port = 9888
-            namespace.daemon_grpc_port = 9889
-            namespace.daemon_host = "localhost"
-            namespace.force = False
             mock.assert_called_once_with(namespace)
 
     async def test_clear_keychain(self) -> None:
@@ -545,7 +544,7 @@ class TestParser(TestCase):
             output_file = "video.mp4"
             await cli_main(cmd_input=["record-video", output_file])
             namespace = Namespace()
-            namespace.companion_path = "/usr/local/bin/idb_companion"
+            namespace.companion_path = COMPANION_PATH
             namespace.companion = None
             namespace.log_level = "WARNING"
             namespace.log_level_deprecated = None
@@ -553,10 +552,6 @@ class TestParser(TestCase):
             namespace.udid = None
             namespace.json = False
             namespace.output_file = output_file
-            namespace.daemon_port = 9888
-            namespace.daemon_grpc_port = 9889
-            namespace.daemon_host = "localhost"
-            namespace.force = False
             mock.assert_called_once_with(namespace)
 
     async def test_key_sequence(self) -> None:

@@ -10,7 +10,6 @@
 #import <FBControlCore/FBControlCore.h>
 #import <FBSimulatorControl/FBSimulatorControl.h>
 
-#import "FBBootManager.h"
 #import "FBIDBCompanionServer.h"
 #import "FBIDBConfiguration.h"
 #import "FBIDBError.h"
@@ -38,10 +37,21 @@ Usage: \n \
     --debug-port PORT          Port to connect debugger on (default: 10881).\n\
     --log-file-path PATH       Path to write a log file to e.g ./output.log (default: logs to stdErr).\n\
     --device-set-path PATH     Path to a custom Simulator device set.\n\
+    --headless VALUE           If VALUE is a true value, the Simulator boot's lifecycle will be tied to the lifecycle of this invocation.\n\
     --terminate-offline VALUE  Terminate if the target goes offline, otherwise the companion will stay alive.\n";
 
-static BOOL shouldPrintUsage(void) {
+static BOOL shouldPrintUsage(void)
+{
   return [NSProcessInfo.processInfo.arguments containsObject:@"--help"];
+}
+
+static void WriteJSONToStdOut(id json)
+{
+  NSData *jsonOutput = [NSJSONSerialization dataWithJSONObject:json options:0 error:nil];
+  NSMutableData *readyOutput = [NSMutableData dataWithData:jsonOutput];
+  [readyOutput appendData:[@"\n" dataUsingEncoding:NSUTF8StringEncoding]];
+  write(STDOUT_FILENO, readyOutput.bytes, readyOutput.length);
+  fflush(stdout);
 }
 
 static FBFuture<FBSimulatorSet *> *SimulatorSet(NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
@@ -56,7 +66,7 @@ static FBFuture<FBSimulatorSet *> *SimulatorSet(NSUserDefaults *userDefaults, id
   return [FBFuture futureWithResult:control.set];
 }
 
-static FBFuture<id<FBSimulatorLifecycleCommands>> *LifecycleCommandsFuture(NSString *udid, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
+static FBFuture<FBSimulator *> *SimulatorFuture(NSString *udid, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
 {
   NSError *error = nil;
   id<FBiOSTarget> target = [FBiOSTargetProvider targetWithUDID:udid logger:logger reporter:reporter error:&error];
@@ -66,7 +76,7 @@ static FBFuture<id<FBSimulatorLifecycleCommands>> *LifecycleCommandsFuture(NSStr
   id<FBSimulatorLifecycleCommands> commands = (id<FBSimulatorLifecycleCommands>) target;
   if (![commands conformsToProtocol:@protocol(FBSimulatorLifecycleCommands)]) {
     return [[FBIDBError
-      describeFormat:@"%@ does not support shutdown", commands]
+      describeFormat:@"%@ does not support Simulator Lifecycle commands", commands]
       failFuture];
   }
   return [FBFuture futureWithResult:commands];
@@ -85,19 +95,45 @@ static FBFuture<NSNull *> *TargetOfflineFuture(id<FBiOSTarget> target, id<FBCont
     mapReplace:NSNull.null];
 }
 
+static FBFuture<FBFuture<NSNull *> *> *BootFuture(NSString *udid, BOOL headless, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
+{
+  return [[SimulatorFuture(udid, logger, reporter)
+    onQueue:dispatch_get_main_queue() fmap:^(FBSimulator *simulator) {
+      // Boot the simulator with the options provided.
+      FBSimulatorBootConfiguration *config = FBSimulatorBootConfiguration.defaultConfiguration;
+      if (headless) {
+        [logger logFormat:@"Booting %@ headlessly", udid];
+        config = [config withOptions:(config.options | FBSimulatorBootOptionsEnableDirectLaunch)];
+      } else {
+        [logger logFormat:@"Booting %@ normally", udid];
+      }
+      return [[simulator bootWithConfiguration:config] mapReplace:simulator];
+    }]
+    onQueue:dispatch_get_main_queue() map:^ FBFuture<NSNull *> * (FBSimulator *simulator) {
+      // Write the boot success to stdout
+      FBiOSTargetStateUpdate *update = [[FBiOSTargetStateUpdate alloc] initWithUDID:simulator.udid state:simulator.state type:FBiOSTargetTypeSimulator name:simulator.name osVersion:simulator.osVersion architecture:simulator.architecture];
+      WriteJSONToStdOut(update.jsonSerializableRepresentation);
+      // In a headless boot:
+      // - We need to keep this process running until it's otherwise shutdown. When the sim is shutdown this process will die.
+      // - If this process is manually killed then the simulator will die
+      // For a regular boot the sim will outlive this process.
+      return headless ? TargetOfflineFuture(simulator, logger) : [FBFuture futureWithResult:NSNull.null];
+    }];
+}
+
 static FBFuture<NSNull *> *ShutdownFuture(NSString *udid, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
 {
-  return [LifecycleCommandsFuture(udid, logger, reporter)
-    onQueue:dispatch_get_main_queue() fmap:^(id<FBSimulatorLifecycleCommands> commands) {
-      return [commands shutdown];
+  return [SimulatorFuture(udid, logger, reporter)
+    onQueue:dispatch_get_main_queue() fmap:^(FBSimulator *simulator) {
+      return [simulator shutdown];
     }];
 }
 
 static FBFuture<NSNull *> *EraseFuture(NSString *udid, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
 {
-  return [LifecycleCommandsFuture(udid, logger, reporter)
-    onQueue:dispatch_get_main_queue() fmap:^(id<FBSimulatorLifecycleCommands> commands) {
-      return [commands erase];
+  return [SimulatorFuture(udid, logger, reporter)
+    onQueue:dispatch_get_main_queue() fmap:^(FBSimulator *simulator) {
+      return [simulator erase];
     }];
 }
 
@@ -133,7 +169,52 @@ static FBFuture<NSNull *> *CreateFuture(NSString *create, NSUserDefaults *userDe
       }
       return [set createSimulatorWithConfiguration:config];
     }]
-    mapReplace:NSNull.null];
+    onQueue:dispatch_get_main_queue() map:^(FBSimulator *simulator) {
+      FBiOSTargetStateUpdate *update = [[FBiOSTargetStateUpdate alloc] initWithUDID:simulator.udid state:simulator.state type:FBiOSTargetTypeSimulator name:simulator.name osVersion:simulator.osVersion architecture:simulator.architecture];
+      WriteJSONToStdOut(update.jsonSerializableRepresentation);
+      return NSNull.null;
+    }];
+}
+
+static FBFuture<FBFuture<NSNull *> *> *CompanionServerFuture(NSString *udid, NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
+{
+  BOOL terminateOffline = [userDefaults boolForKey:@"-terminate-offline"];
+  NSError *error = nil;
+  if ([udid isEqualToString:@"mac"]) {
+    udid = [FBMacDevice resolveDeviceUDID];
+  }
+  id<FBiOSTarget> target = [FBiOSTargetProvider targetWithUDID:udid logger:logger reporter:reporter error:&error];
+  if (!target) {
+    return [FBFuture futureWithError:error];
+  }
+  [reporter addMetadata:@{@"udid": udid}];
+  [reporter report:[FBEventReporterSubject subjectForEvent:FBEventNameLaunched]];
+  // Start up the companion
+  FBIDBPortsConfiguration *ports = [FBIDBPortsConfiguration portsWithArguments:userDefaults];
+  FBTemporaryDirectory *temporaryDirectory = [FBTemporaryDirectory temporaryDirectoryWithLogger:logger];
+  FBIDBCompanionServer *server = [FBIDBCompanionServer companionForTarget:target temporaryDirectory:temporaryDirectory ports:ports eventReporter:reporter logger:logger error:&error];
+  if (!server) {
+    return [FBFuture futureWithError:error];
+  }
+
+  return [[server
+    start]
+    onQueue:target.workQueue map:^ FBFuture * (NSNumber *port) {
+      WriteJSONToStdOut(@{@"grpc_port": port});
+      FBFuture<NSNull *> *completed = server.completed;
+      if (terminateOffline) {
+        [logger.info logFormat:@"Companion will terminate when target goes offline"];
+        completed = [FBFuture race:@[completed, TargetOfflineFuture(target, logger)]];
+      } else {
+        [logger.info logFormat:@"Companion will stay alive if target goes offline"];
+      }
+      return [completed
+        onQueue:target.workQueue chain:^(FBFuture *future) {
+          [temporaryDirectory cleanOnExit];
+          return future;
+        }];
+    }];
+
 }
 
 static FBFuture<FBFuture<NSNull *> *> *GetCompanionCompletedFuture(int argc, const char *argv[], NSUserDefaults *userDefaults, FBIDBLogger *logger) {
@@ -144,55 +225,16 @@ static FBFuture<FBFuture<NSNull *> *> *GetCompanionCompletedFuture(int argc, con
   NSString *shutdown = [userDefaults stringForKey:@"-shutdown"];
   NSString *erase = [userDefaults stringForKey:@"-erase"];
   NSString *delete = [userDefaults stringForKey:@"-delete"];
-  BOOL terminateOffline = [userDefaults boolForKey:@"-terminate-offline"];
 
-  NSError *error = nil;
   id<FBEventReporter> reporter = FBIDBConfiguration.eventReporter;
   if (udid) {
-    if ([udid isEqualToString:@"mac"]) {
-      udid = [FBMacDevice resolveDeviceUDID];
-    }
-    id<FBiOSTarget> target = [FBiOSTargetProvider targetWithUDID:udid logger:logger reporter:reporter error:&error];
-    if (!target) {
-      return [FBFuture futureWithError:error];
-    }
-    [reporter addMetadata:@{@"udid": udid}];
-    [reporter report:[FBEventReporterSubject subjectForEvent:FBEventNameLaunched]];
-    // Start up the companion
-    FBIDBPortsConfiguration *ports = [FBIDBPortsConfiguration portsWithArguments:userDefaults];
-    FBTemporaryDirectory *temporaryDirectory = [FBTemporaryDirectory temporaryDirectoryWithLogger:logger];
-    FBIDBCompanionServer *server = [FBIDBCompanionServer companionForTarget:target temporaryDirectory:temporaryDirectory ports:ports eventReporter:reporter logger:logger error:&error];
-    if (!server) {
-      return [FBFuture futureWithError:error];
-    }
-
-    return [[server
-      start]
-      onQueue:target.workQueue map:^id(NSNumber *port) {
-        NSData *jsonOutput = [NSJSONSerialization dataWithJSONObject:@{@"grpc_port": port} options:0 error:nil];
-        NSMutableData *readyOutput = [NSMutableData dataWithData:jsonOutput];
-        [readyOutput appendData:[@"\n" dataUsingEncoding:NSUTF8StringEncoding]];
-        write(STDOUT_FILENO, readyOutput.bytes, readyOutput.length);
-        fflush(stdout);
-        FBFuture<NSNull *> *completed = server.completed;
-        if (terminateOffline) {
-          [logger.info logFormat:@"Companion will terminate when target goes offline"];
-          completed = [FBFuture race:@[completed, TargetOfflineFuture(target, logger)]];
-        } else {
-          [logger.info logFormat:@"Companion will stay alive if target goes offline"];
-        }
-        return [completed
-          onQueue:target.workQueue chain:^(FBFuture *future) {
-            [temporaryDirectory cleanOnExit];
-            return future;
-          }];
-      }];
+    return CompanionServerFuture(udid, userDefaults, logger, reporter);
   } else if (notifyFilePath) {
     [logger.info logFormat:@"Notify mode is set. writing updates to %@", notifyFilePath];
     return [[FBiOSTargetStateChangeNotifier notifierToFilePath:notifyFilePath logger:logger] startNotifier];
   } else if (boot) {
-    [logger.info log:@"Booting target"];
-    return [FBFuture futureWithResult:[[FBBootManager bootManagerForLogger:logger] boot:boot]];
+    [logger logFormat:@"Booting %@", udid];
+    return BootFuture(boot, [userDefaults boolForKey:@"-headless"], logger, reporter);
   } else if(shutdown) {
     [logger.info logFormat:@"Shutting down %@", shutdown];
     return [FBFuture futureWithResult:ShutdownFuture(shutdown, logger, reporter)];

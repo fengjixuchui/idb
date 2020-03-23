@@ -6,7 +6,6 @@
 
 import asyncio
 import logging
-import os
 import tempfile
 from sys import platform
 from typing import AsyncContextManager, Dict, List, Optional
@@ -28,30 +27,37 @@ from idb.grpc.companion import merge_connected_targets
 from idb.grpc.destination import destination_to_grpc
 from idb.grpc.idb_pb2 import ConnectRequest
 from idb.grpc.logging import log_call
-from idb.grpc.target import target_to_py
 from idb.utils.contextlib import asynccontextmanager
 from idb.utils.typing import none_throws
 
 
 class IdbManagementClient(IdbManagementClientBase):
     def __init__(
-        self, companion_path: str, logger: Optional[logging.Logger] = None
+        self,
+        companion_path: Optional[str] = None,
+        device_set_path: Optional[str] = None,
+        logger: Optional[logging.Logger] = None,
     ) -> None:
+        self.companion_path = companion_path
+        self.device_set_path = device_set_path
         self.logger: logging.Logger = (
             logger if logger else logging.getLogger("idb_grpc_client")
         )
         self.direct_companion_manager = DirectCompanionManager(logger=self.logger)
         self.local_targets_manager = LocalTargetsManager(logger=self.logger)
-        self.companion_path = companion_path
 
     async def _spawn_notifier(self) -> None:
-        if platform == "darwin" and os.path.exists(self.companion_path):
+        companion_path = self.companion_path
+        if companion_path:
             companion_spawner = CompanionSpawner(
-                companion_path=self.companion_path, logger=self.logger
+                companion_path=companion_path, logger=self.logger
             )
             await companion_spawner.spawn_notifier()
 
     async def _spawn_companion(self, target_udid: str) -> Optional[CompanionInfo]:
+        companion_path = self.companion_path
+        if companion_path is None:
+            return None
         if (
             self.local_targets_manager.is_local_target_available(
                 target_udid=target_udid
@@ -59,7 +65,7 @@ class IdbManagementClient(IdbManagementClientBase):
             or target_udid == "mac"
         ):
             companion_spawner = CompanionSpawner(
-                companion_path=self.companion_path, logger=self.logger
+                companion_path=companion_path, logger=self.logger
             )
             self.logger.info(f"will attempt to spawn a companion for {target_udid}")
             port = await companion_spawner.spawn_companion(target_udid=target_udid)
@@ -188,14 +194,33 @@ class IdbManagementClient(IdbManagementClientBase):
         await self._run_udid_command(udid=udid, command="erase")
 
     @log_call()
+    async def delete(self, udid: Optional[str]) -> None:
+        await self._run_udid_command(
+            udid=udid if udid is not None else "all", command="delete"
+        )
+
+    @log_call()
     async def kill(self) -> None:
         await self.direct_companion_manager.clear()
         self.local_targets_manager.clear()
         PidSaver(logger=self.logger).kill_saved_pids()
 
     async def _run_udid_command(self, udid: str, command: str) -> None:
-        cmd: List[str] = [self.companion_path, f"--{command}", udid]
+        companion_path = self.companion_path
+        if companion_path is None:
+            if platform == "darwin":
+                raise IdbException("Companion path not provided")
+            else:
+                raise IdbException(
+                    "Companion interactions do not work on non-macOS platforms"
+                )
+        cmd: List[str] = [companion_path]
+        device_set_path = self.device_set_path
+        if device_set_path is not None:
+            cmd.extend(["--device-set-path", device_set_path])
+        cmd.extend([f"--{command}", udid])
         process = await asyncio.create_subprocess_exec(*cmd, stdout=None, stderr=None)
+        await process.wait()
         if process.returncode != 0:
             raise IdbException(f"Failed to {command} {udid}")
         self.logger.info(f"{udid} did {command} successfully.")
