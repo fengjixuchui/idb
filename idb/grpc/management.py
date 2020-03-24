@@ -5,7 +5,10 @@
 # LICENSE file in the root directory of this source tree.
 
 import asyncio
+import json
 import logging
+import signal
+import subprocess
 import tempfile
 from sys import platform
 from typing import AsyncContextManager, Dict, List, Optional
@@ -29,6 +32,29 @@ from idb.grpc.idb_pb2 import ConnectRequest
 from idb.grpc.logging import log_call
 from idb.utils.contextlib import asynccontextmanager
 from idb.utils.typing import none_throws
+
+
+async def _terminate_process(
+    process: asyncio.subprocess.Process, logger: logging.Logger, timeout: int = 30
+) -> None:
+    logger.info(f"Stopping process {process} with SIGINT, waiting {timeout} seconds")
+    if process.returncode is not None:
+        logger.info(
+            f"Process is already terminated with {process.returncode} "
+            "perhaps it died prematurely"
+        )
+        return
+    process.send_signal(signal.SIGINT)
+    try:
+        await asyncio.wait_for(process.wait(), timeout=timeout)
+        logger.info(f"Stopped process {process} with SIGINT")
+    except TimeoutError:
+        logger.info(
+            f"Process {process} didn't close after {timeout} seconds, killing..."
+        )
+    finally:
+        if process.returncode is None:
+            process.kill()
 
 
 class IdbManagementClient(IdbManagementClientBase):
@@ -96,6 +122,42 @@ class IdbManagementClient(IdbManagementClientBase):
                 Address(host=companion.host, port=companion.port)
             )
             return None
+
+    @asynccontextmanager
+    async def _start_companion_command(
+        self, arguments: List[str]
+    ) -> AsyncContextManager[asyncio.subprocess.Process]:
+        companion_path = self.companion_path
+        if companion_path is None:
+            if platform == "darwin":
+                raise IdbException("Companion path not provided")
+            else:
+                raise IdbException(
+                    "Companion interactions do not work on non-macOS platforms"
+                )
+        cmd: List[str] = [companion_path]
+        device_set_path = self.device_set_path
+        if device_set_path is not None:
+            cmd.extend(["--device-set-path", device_set_path])
+        cmd.extend(arguments)
+        process = await asyncio.create_subprocess_exec(
+            *cmd, stdout=subprocess.PIPE, stderr=None
+        )
+        try:
+            yield process
+        finally:
+            await _terminate_process(process=process, logger=self.logger)
+
+    async def _run_companion_command(self, arguments: List[str]) -> str:
+        async with self._start_companion_command(arguments=arguments) as process:
+            (output, _) = await process.communicate()
+            if process.returncode != 0:
+                raise IdbException(f"Failed to run {arguments}")
+            self.logger.info(f"Ran {arguments} successfully.")
+            return output.decode()
+
+    async def _run_udid_command(self, udid: str, command: str) -> None:
+        await self._run_companion_command(arguments=[f"--{command}", udid])
 
     @asynccontextmanager
     async def from_udid(self, udid: Optional[str]) -> AsyncContextManager[IdbClient]:
@@ -182,8 +244,29 @@ class IdbManagementClient(IdbManagementClientBase):
         await self.direct_companion_manager.remove_companion(destination)
 
     @log_call()
+    async def create(self, device_type: str, os_version: str) -> str:
+        output = await self._run_companion_command(
+            arguments=["--create", f"{device_type},{os_version}"]
+        )
+        created = json.loads(output.splitlines()[-1])
+        return created["udid"]
+
+    @log_call()
     async def boot(self, udid: str) -> None:
         await self._run_udid_command(udid=udid, command="boot")
+
+    @asynccontextmanager
+    async def boot_headless(self, udid: str) -> AsyncContextManager[None]:
+        async with self._start_companion_command(
+            ["--headless", "--boot", udid]
+        ) as process:
+            # The first line written to stdout is information about the booted sim.
+            line = await none_throws(process.stdout).readline()
+            target = json.loads(line.decode())
+            assert target["udid"] == udid
+            self.logger.info(f"{udid} is now booted")
+            yield None
+            self.logger.info(f"Done with {udid}. Shutting down.")
 
     @log_call()
     async def shutdown(self, udid: str) -> None:
@@ -204,23 +287,3 @@ class IdbManagementClient(IdbManagementClientBase):
         await self.direct_companion_manager.clear()
         self.local_targets_manager.clear()
         PidSaver(logger=self.logger).kill_saved_pids()
-
-    async def _run_udid_command(self, udid: str, command: str) -> None:
-        companion_path = self.companion_path
-        if companion_path is None:
-            if platform == "darwin":
-                raise IdbException("Companion path not provided")
-            else:
-                raise IdbException(
-                    "Companion interactions do not work on non-macOS platforms"
-                )
-        cmd: List[str] = [companion_path]
-        device_set_path = self.device_set_path
-        if device_set_path is not None:
-            cmd.extend(["--device-set-path", device_set_path])
-        cmd.extend([f"--{command}", udid])
-        process = await asyncio.create_subprocess_exec(*cmd, stdout=None, stderr=None)
-        await process.wait()
-        if process.returncode != 0:
-            raise IdbException(f"Failed to {command} {udid}")
-        self.logger.info(f"{udid} did {command} successfully.")
