@@ -370,6 +370,8 @@ class TestParser(TestCase):
         namespace = Namespace()
         namespace.companion_path = COMPANION_PATH
         namespace.companion = None
+        namespace.companion_local = False
+        namespace.prune_dead_companion = True
         namespace.log_level = "WARNING"
         namespace.log_level_deprecated = None
         namespace.root_command = "xctest"
@@ -465,6 +467,8 @@ class TestParser(TestCase):
             namespace = Namespace()
             namespace.companion_path = COMPANION_PATH
             namespace.companion = None
+            namespace.companion_local = False
+            namespace.prune_dead_companion = True
             namespace.daemon_port = port
             namespace.daemon_grpc_port = grpc_port
             namespace.log_level = "WARNING"
@@ -490,6 +494,8 @@ class TestParser(TestCase):
             namespace = Namespace()
             namespace.companion_path = COMPANION_PATH
             namespace.companion = None
+            namespace.companion_local = False
+            namespace.prune_dead_companion = True
             namespace.log_level = "WARNING"
             namespace.log_level_deprecated = None
             namespace.root_command = "log"
@@ -505,6 +511,8 @@ class TestParser(TestCase):
             namespace = Namespace()
             namespace.companion_path = COMPANION_PATH
             namespace.companion = None
+            namespace.companion_local = False
+            namespace.prune_dead_companion = True
             namespace.log_level = "WARNING"
             namespace.log_level_deprecated = None
             namespace.root_command = "log"
@@ -553,6 +561,8 @@ class TestParser(TestCase):
             namespace = Namespace()
             namespace.companion_path = COMPANION_PATH
             namespace.companion = None
+            namespace.companion_local = False
+            namespace.prune_dead_companion = True
             namespace.log_level = "WARNING"
             namespace.log_level_deprecated = None
             namespace.root_command = "record-video"

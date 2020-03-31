@@ -29,7 +29,6 @@ from typing import (
 
 from grpclib.client import Channel
 from grpclib.exceptions import GRPCError, ProtocolError, StreamTerminatedError
-from idb.common.companion_spawner import CompanionSpawner
 from idb.common.constants import TESTS_POLL_INTERVAL
 from idb.common.gzip import drain_gzip_decompress
 from idb.common.hid import (
@@ -40,12 +39,11 @@ from idb.common.hid import (
     tap_to_events,
     text_to_events,
 )
-from idb.common.local_targets_manager import LocalTargetsManager
-from idb.common.pid_saver import PidSaver
 from idb.common.stream import stream_map
 from idb.common.tar import create_tar, drain_untar, generate_tar
 from idb.common.types import (
     AccessibilityInfo,
+    Address,
     AppProcessState,
     CrashLog,
     CrashLogInfo,
@@ -54,6 +52,7 @@ from idb.common.types import (
     HIDButtonType,
     HIDEvent,
     IdbClient as IdbClientBase,
+    IdbConnectionException,
     IdbException,
     InstalledAppInfo,
     InstalledArtifact,
@@ -63,13 +62,11 @@ from idb.common.types import (
     TargetDescription,
     TestRunInfo,
 )
-from idb.grpc.companion import merge_connected_targets
 from idb.grpc.crash import (
     _to_crash_log,
     _to_crash_log_info_list,
     _to_crash_log_query_proto,
 )
-from idb.grpc.destination import destination_to_grpc
 from idb.grpc.hid import event_to_grpc
 from idb.grpc.idb_grpc import CompanionServiceStub
 from idb.grpc.idb_pb2 import (
@@ -130,7 +127,6 @@ from idb.grpc.target import target_to_py
 from idb.grpc.video import generate_video_bytes
 from idb.grpc.xctest import make_request, make_results, write_result_bundle
 from idb.utils.contextlib import asynccontextmanager
-from idb.utils.typing import none_throws
 
 
 APPROVE_MAP: Dict[str, Any] = {
@@ -153,6 +149,8 @@ def log_and_handle_exceptions(func):  # pyre-ignore
             raise IdbException(e.message) from e  # noqa B306
         except (ProtocolError, StreamTerminatedError) as e:
             raise IdbException(e.args) from e
+        except OSError as e:
+            raise IdbConnectionException(e.strerror)
 
     @functools.wraps(func)
     @log_call(name=func.__name__, metadata=CLIENT_METADATA)
@@ -165,6 +163,8 @@ def log_and_handle_exceptions(func):  # pyre-ignore
             raise IdbException(e.message) from e  # noqa B306
         except (ProtocolError, StreamTerminatedError) as e:
             raise IdbException(e.args) from e
+        except OSError as e:
+            raise IdbConnectionException(e.strerror)
 
     if inspect.isasyncgenfunction(func):
         return func_wrapper_gen
@@ -174,9 +174,14 @@ def log_and_handle_exceptions(func):  # pyre-ignore
 
 class IdbClient(IdbClientBase):
     def __init__(
-        self, stub: CompanionServiceStub, is_local: bool, logger: logging.Logger
+        self,
+        stub: CompanionServiceStub,
+        address: Address,
+        is_local: bool,
+        logger: logging.Logger,
     ) -> None:
         self.stub = stub
+        self.address = address
         self.is_local = is_local
         self.logger = logger
 
@@ -189,6 +194,7 @@ class IdbClient(IdbClientBase):
         try:
             yield IdbClient(
                 stub=CompanionServiceStub(channel=channel),
+                address=Address(host=host, port=port),
                 is_local=is_local,
                 logger=logger,
             )
@@ -249,6 +255,9 @@ class IdbClient(IdbClientBase):
     @property
     def _is_verbose(self) -> bool:
         return self.logger.isEnabledFor(logging.DEBUG)
+
+    def _log_from_companion(self, data: str) -> None:
+        self.logger.info(data.strip())
 
     @log_and_handle_exceptions
     async def list_apps(self) -> List[InstalledAppInfo]:
@@ -746,7 +755,7 @@ class IdbClient(IdbClientBase):
                     for lines in response.log_output
                     for line in lines.splitlines(keepends=True)
                 ]:
-                    self.logger.info(line)
+                    self._log_from_companion(line)
                     if idb_log_buffer:
                         idb_log_buffer.write(line)
                 if result_bundle_path:

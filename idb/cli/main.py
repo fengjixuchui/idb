@@ -130,6 +130,21 @@ async def gen_main(cmd_input: Optional[List[str]] = None,) -> int:
         default="/usr/local/bin/idb_companion" if sys.platform == "darwin" else None,
         help="The path to the idb companion binary. This is only valid when running on macOS platforms",
     )
+    parser.add_argument(
+        "--companion-local",
+        action="store_true",
+        default=False,
+        help="If set, any companion provided via IDB_COMPANION or --companion will be assumed to be running on this host."
+        "Even if the companion provided is 'localhost' idb will still assume it is remote."
+        "The reason for this is that idb shouldn't assume there are no tunnels from localhost to a remote host.",
+    )
+    parser.add_argument(
+        "--no-prune-dead-companion",
+        dest="prune_dead_companion",
+        action="store_false",
+        default=True,
+        help="If flagged will not modify local state when a companion is known to be unresponsive",
+    )
     commands: List[Command] = [
         AppInstallCommand(),
         AppUninstallCommand(),
