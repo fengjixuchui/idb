@@ -202,14 +202,15 @@ class TargetCreateCommand(ManagementCommand):
         print(udid)
 
 
-class TargetBootCommand(ManagementCommand):
+class UDIDTargetedManagementCommand(ManagementCommand):
     def add_parser_arguments(self, parser: ArgumentParser) -> None:
-        parser.add_argument(
-            "--udid",
-            help="Udid of target, can also be set with the IDB_UDID env var",
-            required=True,
-            default=os.environ.get("IDB_UDID"),
-        )
+        super().add_parser_arguments(parser=parser)
+        parser.add_argument("udid", help="The UDID of the target")
+
+
+class TargetBootCommand(UDIDTargetedManagementCommand):
+    def add_parser_arguments(self, parser: ArgumentParser) -> None:
+        super().add_parser_arguments(parser)
         parser.add_argument(
             "--headless",
             help="Boot the simulator headlessly. "
@@ -218,7 +219,6 @@ class TargetBootCommand(ManagementCommand):
             default=False,
             action="store_true",
         )
-        super().add_parser_arguments(parser)
 
     @property
     def description(self) -> str:
@@ -238,15 +238,7 @@ class TargetBootCommand(ManagementCommand):
             await client.boot(udid=args.udid)
 
 
-class TargetShutdownCommand(ManagementCommand):
-    def add_parser_arguments(self, parser: ArgumentParser) -> None:
-        parser.add_argument(
-            "udid",
-            help="Udid of target to shutdown, can also be set with the IDB_UDID env var",
-            default=os.environ.get("IDB_UDID"),
-        )
-        super().add_parser_arguments(parser)
-
+class TargetShutdownCommand(UDIDTargetedManagementCommand):
     @property
     def description(self) -> str:
         return "Shuts the simulator down (only works on mac)"
@@ -261,15 +253,7 @@ class TargetShutdownCommand(ManagementCommand):
         await client.shutdown(udid=args.udid)
 
 
-class TargetEraseCommand(ManagementCommand):
-    def add_parser_arguments(self, parser: ArgumentParser) -> None:
-        parser.add_argument(
-            "udid",
-            help="udid of target to erase, can also be set with the IDB_UDID env var",
-            default=os.environ.get("IDB_UDID"),
-        )
-        super().add_parser_arguments(parser)
-
+class TargetEraseCommand(UDIDTargetedManagementCommand):
     @property
     def description(self) -> str:
         return "Erases the simulator (only works on mac)"
@@ -284,15 +268,23 @@ class TargetEraseCommand(ManagementCommand):
         await client.erase(udid=args.udid)
 
 
-class TargetDeleteCommand(ManagementCommand):
-    def add_parser_arguments(self, parser: ArgumentParser) -> None:
-        parser.add_argument(
-            "udid",
-            help="udid of target to erase, can also be set with the IDB_UDID env var",
-            default=os.environ.get("IDB_UDID"),
-        )
-        super().add_parser_arguments(parser)
+class TargetCloneCommand(UDIDTargetedManagementCommand):
+    @property
+    def description(self) -> str:
+        return "Erases the simulator (only works on mac)"
 
+    @property
+    def name(self) -> str:
+        return "clone"
+
+    async def run_with_client(
+        self, args: Namespace, client: IdbManagementClient
+    ) -> None:
+        udid = await client.clone(udid=args.udid)
+        print(udid)
+
+
+class TargetDeleteCommand(UDIDTargetedManagementCommand):
     @property
     def description(self) -> str:
         return "Deletes (only works on mac)"

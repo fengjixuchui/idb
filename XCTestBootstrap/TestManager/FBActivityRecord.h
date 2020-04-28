@@ -7,6 +7,7 @@
 
 #import <Foundation/Foundation.h>
 
+@class FBAttachment;
 @class XCActivityRecord;
 
 NS_ASSUME_NONNULL_BEGIN
@@ -16,16 +17,15 @@ NS_ASSUME_NONNULL_BEGIN
  */
 @interface FBActivityRecord : NSObject
 
-@property (nonatomic, copy, readonly) NSData *memoryGraphData;
-@property (nonatomic, copy, readonly) NSData *diagnosticReportData;
-@property (nonatomic, copy, readonly) NSArray *elementsOfInterest;
-@property (nonatomic, copy, readonly) NSData *screenImageData;
-@property (nonatomic, assign, readonly) BOOL hasSubactivities;
+@property (nonatomic, copy, readonly) NSString *title;
+@property (nonatomic, copy, readonly) NSString *activityType;
+@property (nonatomic, copy, readonly) NSUUID *uuid;
 @property (nonatomic, copy, readonly) NSDate *start;
 @property (nonatomic, copy, readonly) NSDate *finish;
-@property (nonatomic, copy, readonly) NSUUID *uuid;
-@property (nonatomic, copy, readonly) NSString *title;
+@property (nonatomic, readonly) NSArray<FBAttachment *> *attachments;
 @property (nonatomic, assign, readonly) double duration;
+@property (nonatomic, copy, readonly) NSString *name;
+@property (nonatomic, copy) NSMutableArray<FBActivityRecord *> *subactivities;
 
 /**
  Constructs a activity summary from a XCActivityRecord

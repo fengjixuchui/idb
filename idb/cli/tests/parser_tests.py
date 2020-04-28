@@ -18,6 +18,7 @@ from idb.utils.testing import AsyncContextManagerMock, AsyncMock, TestCase
 
 
 T = TypeVar("T")
+# pyre-fixme[5]: Global expression must be annotated.
 COMPANION_PATH = "/usr/local/bin/idb_companion" if sys.platform == "darwin" else None
 
 
@@ -87,7 +88,7 @@ class TestParser(TestCase):
     async def test_boot(self) -> None:
         self.management_client_mock().boot = AsyncMock()
         udid = "my udid"
-        await cli_main(cmd_input=["boot", "--udid", udid])
+        await cli_main(cmd_input=["boot", udid])
         self.management_client_mock().boot.assert_called_once_with(udid=udid)
 
     async def test_shutdown(self) -> None:
@@ -101,6 +102,12 @@ class TestParser(TestCase):
         udid = "my udid"
         await cli_main(cmd_input=["erase", udid])
         self.management_client_mock().erase.assert_called_once_with(udid=udid)
+
+    async def test_clone(self) -> None:
+        self.management_client_mock().clone = AsyncMock()
+        udid = "my udid"
+        await cli_main(cmd_input=["clone", udid])
+        self.management_client_mock().clone.assert_called_once_with(udid=udid)
 
     async def test_delete(self) -> None:
         self.management_client_mock().delete = AsyncMock()
@@ -388,6 +395,8 @@ class TestParser(TestCase):
         namespace.run = command
         namespace.test_bundle_id = test_bundle_id
         namespace.result_bundle_path = None
+        namespace.report_activities = False
+        namespace.activities_output_path = None
         return namespace
 
     async def test_xctest_run_app(self) -> None:

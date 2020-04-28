@@ -70,6 +70,7 @@ from idb.cli.commands.screenshot import ScreenshotCommand
 from idb.cli.commands.target import (
     ConnectCommandException,
     TargetBootCommand,
+    TargetCloneCommand,
     TargetConnectCommand,
     TargetCreateCommand,
     TargetDeleteAllCommand,
@@ -108,6 +109,8 @@ async def gen_main(cmd_input: Optional[List[str]] = None,) -> int:
     parser = argparse.ArgumentParser(
         description="idb: a versatile tool to communicate with iOS Simulators and Devices",
         epilog="See Also: https://www.fbidb.io/docs/guided-tour",
+        # pyre-fixme[6]: Expected `_FormatterClass` for 3rd param but got
+        #  `Type[argparse.RawTextHelpFormatter]`.
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
@@ -199,6 +202,7 @@ async def gen_main(cmd_input: Optional[List[str]] = None,) -> int:
         TargetBootCommand(),
         TargetShutdownCommand(),
         TargetEraseCommand(),
+        TargetCloneCommand(),
         TargetDeleteCommand(),
         TargetDeleteAllCommand(),
         DaemonCommand(),
