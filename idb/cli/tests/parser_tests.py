@@ -57,11 +57,11 @@ class TestParser(TestCase):
             return_value=self.direct_client_mock
         )
         self.management_client_patch = patch(
-            "idb.cli.commands.base.IdbManagementClientGrpc", self.management_client_mock
+            "idb.cli.IdbManagementClientGrpc", self.management_client_mock
         )
         self.management_client_patch.start()
         self.direct_client_patch = patch(
-            "idb.cli.commands.base.IdbClientGrpc", self.direct_client_mock
+            "idb.cli.IdbClientGrpc", self.direct_client_mock
         )
         self.direct_client_patch.start()
 
@@ -402,6 +402,7 @@ class TestParser(TestCase):
         namespace.report_activities = False
         namespace.activities_output_path = None
         namespace.coverage_output_path = None
+        namespace.install = False
         return namespace
 
     async def test_xctest_run_app(self) -> None:
