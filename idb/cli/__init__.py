@@ -12,6 +12,7 @@ from typing import AsyncContextManager, Optional, Tuple
 
 from idb.common import plugin
 from idb.common.command import Command
+from idb.common.companion import Companion
 from idb.common.logging import log_call
 from idb.common.types import (
     Address,
@@ -98,8 +99,8 @@ class BaseCommand(Command, metaclass=ABCMeta):
         raise Exception("subclass")
 
 
-# A command that vends the IdbClientBase interface.
-class CompanionCommand(BaseCommand):
+# A command that vends the IdbClient interface.
+class ClientCommand(BaseCommand):
     def add_parser_arguments(self, parser: ArgumentParser) -> None:
         parser.add_argument(
             "--udid",
@@ -131,7 +132,7 @@ class CompanionCommand(BaseCommand):
         pass
 
 
-# A command that vends the IdbClient interface
+# A command that vends the IdbManagementClient interface
 class ManagementCommand(BaseCommand):
     async def _run_impl(self, args: Namespace) -> None:
         await self.run_with_client(
@@ -142,4 +143,21 @@ class ManagementCommand(BaseCommand):
     async def run_with_client(
         self, args: Namespace, client: IdbManagementClient
     ) -> None:
+        pass
+
+
+# A command that vends the Companion interface
+class CompanionCommand(BaseCommand):
+    async def _run_impl(self, args: Namespace) -> None:
+        await self.run_with_companion(
+            args=args,
+            companion=Companion(
+                companion_path=args.companion_path,
+                device_set_path=None,
+                logger=self.logger,
+            ),
+        )
+
+    @abstractmethod
+    async def run_with_companion(self, args: Namespace, companion: Companion) -> None:
         pass

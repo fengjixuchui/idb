@@ -31,7 +31,7 @@ Usage: \n \
     --delete UDID|all          Deletes the simulator with the specified UDID, or 'all' to delete all simulators in the set. \n\
     --create VALUE             Creates a simulator using the VALUE argument like \"iPhone X,iOS 12.4\"\n\
     --clone UDID               Clones a simulator by a given UDID\n\
-    --notify PATH              Launches a companion notifier which will stream availability updates to the specified path.\n\
+    --notify PATH|stdout       Launches a companion notifier which will stream availability updates to the specified path, or stdout.\n\
     --list 1                   Lists all available devices/simulators in the current context.\n\
     --help                     Show this help message and exit.\n\
 \n\
@@ -40,6 +40,7 @@ Usage: \n \
     --debug-port PORT          Port to connect debugger on (default: 10881).\n\
     --log-file-path PATH       Path to write a log file to e.g ./output.log (default: logs to stdErr).\n\
     --device-set-path PATH     Path to a custom Simulator device set.\n\
+    --device-only 1            If set, will only query against iOS Devices\n\
     --headless VALUE           If VALUE is a true value, the Simulator boot's lifecycle will be tied to the lifecycle of this invocation.\n\
     --terminate-offline VALUE  Terminate if the target goes offline, otherwise the companion will stay alive.\n";
 
@@ -59,9 +60,13 @@ static void WriteJSONToStdOut(id json)
 
 static FBFuture<FBSimulatorSet *> *SimulatorSet(NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
 {
+  // Give a more meaningful message if we can't load the frameworks.
+  NSError *error = nil;
+  if(![FBSimulatorControlFrameworkLoader.essentialFrameworks loadPrivateFrameworks:logger error:&error]) {
+    return [FBFuture futureWithError:error];
+  }
   NSString *deviceSetPath = [userDefaults stringForKey:@"-device-set-path"];
   FBSimulatorControlConfiguration *configuration = [FBSimulatorControlConfiguration configurationWithDeviceSetPath:deviceSetPath options:0 logger:logger reporter:reporter];
-  NSError *error = nil;
   FBSimulatorControl *control = [FBSimulatorControl withConfiguration:configuration error:&error];
   if (!control) {
     return [FBFuture futureWithError:error];
@@ -71,12 +76,29 @@ static FBFuture<FBSimulatorSet *> *SimulatorSet(NSUserDefaults *userDefaults, id
 
 static FBFuture<FBDeviceSet *> *DeviceSet(id<FBControlCoreLogger> logger)
 {
+  // Give a more meaningful message if we can't load the frameworks.
   NSError *error = nil;
+  if(![FBDeviceControlFrameworkLoader.new loadPrivateFrameworks:logger error:&error]) {
+    return [FBFuture futureWithError:error];
+  }
   FBDeviceSet *deviceSet = [FBDeviceSet defaultSetWithLogger:logger error:&error delegate:nil];
   if (!deviceSet) {
     return [FBFuture futureWithError:error];
   }
   return [FBFuture futureWithResult:deviceSet];
+}
+
+static FBFuture<NSArray<id<FBiOSTargetSet>> *> *DefaultTargetSets(NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
+{
+  NSString *deviceOnly = [userDefaults stringForKey:@"-device-only"];
+  if (deviceOnly) {
+    [logger log:@"'--device-only' is set, ignoring simulators"];
+    return [FBFuture futureWithFutures:@[DeviceSet(logger)]];
+  }
+  return [FBFuture futureWithFutures:@[
+    SimulatorSet(userDefaults, logger, reporter),
+    DeviceSet(logger),
+  ]];
 }
 
 static FBFuture<FBSimulator *> *SimulatorFuture(NSString *udid, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
@@ -180,19 +202,12 @@ static FBFuture<NSNull *> *DeleteFuture(NSString *udidOrAll, NSUserDefaults *use
 
 static FBFuture<NSNull *> *ListFuture(NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
 {
-  return [[FBFuture
-    futureWithFutures:@[
-      SimulatorSet(userDefaults, logger, reporter),
-      DeviceSet(logger),
-    ]]
-    onQueue:dispatch_get_main_queue() map:^ NSNull * (NSArray<id> *tup) {
-      FBSimulatorSet *simulatorSet = tup[0];
-      FBDeviceSet *deviceSet = tup[1];
-      for (FBSimulator *simulator in simulatorSet.allSimulators) {
-        WriteJSONToStdOut(simulator.jsonSerializableRepresentation);
-      }
-      for (FBDevice *device in deviceSet.allDevices) {
-        WriteJSONToStdOut(device.jsonSerializableRepresentation);
+  return [DefaultTargetSets(userDefaults, logger, reporter)
+    onQueue:dispatch_get_main_queue() map:^ NSNull * (NSArray<id<FBiOSTargetSet>> *targetSets) {
+      for (id<FBiOSTargetSet> targetSet in targetSets) {
+        for (id<FBiOSTarget> target in targetSet.allTargets) {
+          WriteJSONToStdOut(target.jsonSerializableRepresentation);
+        }
       }
       return NSNull.null;
     }];
@@ -270,7 +285,29 @@ static FBFuture<FBFuture<NSNull *> *> *CompanionServerFuture(NSString *udid, NSU
           return future;
         }];
     }];
+}
 
+static FBFuture<FBFuture<NSNull *> *> *NotiferFuture(NSString *notify, NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
+{
+  return [[[DefaultTargetSets(userDefaults, logger, reporter)
+    onQueue:dispatch_get_main_queue() fmap:^(NSArray<id<FBiOSTargetSet>> *targetSets) {
+      if ([notify isEqualToString:@"stdout"]) {
+        return [FBiOSTargetStateChangeNotifier notifierToStdOutWithTargetSets:targetSets logger:logger];
+      }
+      return [FBiOSTargetStateChangeNotifier notifierToFilePath:notify withTargetSets:targetSets logger:logger];
+    }]
+    onQueue:dispatch_get_main_queue() fmap:^(FBiOSTargetStateChangeNotifier *notifier) {
+      [logger logFormat:@"Starting Notifier %@", notifier];
+      return [[notifier startNotifier] mapReplace:notifier];
+    }]
+    onQueue:dispatch_get_main_queue() map:^(FBiOSTargetStateChangeNotifier *notifier) {
+      [logger logFormat:@"Started Notifier %@", notifier];
+      return [notifier.notifierDone
+        onQueue:dispatch_get_main_queue() respondToCancellation:^{
+          [logger logFormat:@"Stopping Notifier %@", notifier];
+          return FBFuture.empty;
+        }];
+    }];
 }
 
 static FBFuture<FBFuture<NSNull *> *> *GetCompanionCompletedFuture(int argc, const char *argv[], NSUserDefaults *userDefaults, FBIDBLogger *logger) {
@@ -291,8 +328,8 @@ static FBFuture<FBFuture<NSNull *> *> *GetCompanionCompletedFuture(int argc, con
     [logger.info log:@"Listing"];
     return [FBFuture futureWithResult:ListFuture(userDefaults, logger, reporter)];
   } else if (notify) {
-    [logger.info logFormat:@"Notify mode is set. writing updates to %@", notify];
-    return [[FBiOSTargetStateChangeNotifier notifierToFilePath:notify logger:logger] startNotifier];
+    [logger.info logFormat:@"Notifying %@", notify];
+    return NotiferFuture(notify, userDefaults, logger, reporter);
   } else if (boot) {
     [logger logFormat:@"Booting %@", boot];
     return BootFuture(boot, [userDefaults boolForKey:@"-headless"], logger, reporter);

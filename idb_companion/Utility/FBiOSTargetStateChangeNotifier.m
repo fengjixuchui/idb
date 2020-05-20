@@ -10,114 +10,147 @@
 #import <FBSimulatorControl/FBSimulatorControl.h>
 #import <FBDeviceControl/FBDeviceControl.h>
 
+#import "FBIDBError.h"
 
 @interface FBiOSTargetStateChangeNotifier () <FBiOSTargetSetDelegate>
 
+@property (nonatomic, strong, readonly, nullable) NSString *filePath;
+@property (nonatomic, strong, readonly) NSArray<id<FBiOSTargetSet>> *targetSets;
 @property (nonatomic, strong, readonly) id<FBControlCoreLogger> logger;
-@property (nonatomic, strong, readonly) NSString *filePath;
-@property (nonatomic, strong, readwrite) FBDeviceSet *deviceSet;
-@property (nonatomic, strong, readwrite) FBSimulatorSet *simulatorSet;
-@property (nonatomic, strong, readwrite) id<FBDataConsumer> consumer;
-@property (nonatomic, strong, readwrite) NSMutableSet<FBiOSTargetStateUpdate *> *targets;
+@property (nonatomic, strong, readonly) NSMutableSet<FBiOSTargetStateUpdate *> *targets;
+@property (nonatomic, strong, readonly) FBMutableFuture<NSNull *> *finished;
 
 @end
 
 @implementation FBiOSTargetStateChangeNotifier
 
-
 #pragma mark Initializers
 
-+ (instancetype)notifierToFilePath:(NSString *)filePath logger:(id<FBControlCoreLogger>)logger
++ (FBFuture<FBiOSTargetStateChangeNotifier *> *)notifierToFilePath:(NSString *)filePath withTargetSets:(NSArray<id<FBiOSTargetSet>> *)targetSets logger:(id<FBControlCoreLogger>)logger
 {
-  return [[self alloc] initWithFilePath:filePath logger:logger];
+  if (targetSets.count == 0) {
+    return [[FBIDBError
+      describe:@"Cannot initialize FBiOSTargetStateChangeNotifier without any sets to monitor"]
+      failFuture];
+  }
+
+
+  BOOL didCreateFile = [NSFileManager.defaultManager
+    createFileAtPath:filePath
+    contents:[@"[]" dataUsingEncoding:NSUTF8StringEncoding]
+    attributes:@{NSFilePosixPermissions: [NSNumber numberWithShort:0666]}];
+
+  if (!didCreateFile) {
+    return [[FBIDBError
+      describeFormat:@"Failed to create local targets file: %@ %s", filePath, strerror(errno)]
+      failFuture];
+  }
+  FBiOSTargetStateChangeNotifier *notifier = [[self alloc] initWithFilePath:filePath targetSets:targetSets logger:logger];
+  for (id<FBiOSTargetSet> targetSet in targetSets) {
+    targetSet.delegate = notifier;
+  }
+  return [FBFuture futureWithResult:notifier];
 }
 
-- (instancetype)initWithFilePath:(NSString *)filePath logger:(id<FBControlCoreLogger>)logger
++ (FBFuture<FBiOSTargetStateChangeNotifier *> *)notifierToStdOutWithTargetSets:(NSArray<id<FBiOSTargetSet>> *)targetSets logger:(id<FBControlCoreLogger>)logger
+{
+  if (targetSets.count == 0) {
+    return [[FBIDBError
+      describe:@"Cannot initialize FBiOSTargetStateChangeNotifier without any sets to monitor"]
+      failFuture];
+  }
+
+  FBiOSTargetStateChangeNotifier *notifier = [[self alloc] initWithFilePath:nil targetSets:targetSets logger:logger];
+  for (id<FBiOSTargetSet> targetSet in targetSets) {
+    targetSet.delegate = notifier;
+  }
+  return [FBFuture futureWithResult:notifier];
+}
+
+- (instancetype)initWithFilePath:(nullable NSString *)filePath targetSets:(NSArray<id<FBiOSTargetSet>> *)targetSets logger:(id<FBControlCoreLogger>)logger
 {
   self = [super init];
   if (!self) {
     return nil;
   }
-  _logger = logger;
+
   _filePath = filePath;
-  BOOL didCreateFile = [[NSFileManager defaultManager] createFileAtPath:_filePath
-                                                               contents:[@"[]" dataUsingEncoding:NSUTF8StringEncoding]
-                                                             attributes:@{NSFilePosixPermissions: [NSNumber numberWithShort:0666]}];
-  if (!didCreateFile) {
-    [logger.error logFormat:@"Failed to create local targets file: %s", strerror(errno)];
-    exit(1);
-  }
+  _targetSets = targetSets;
+  _logger = logger;
   _targets = [[NSMutableSet alloc] init];
+  _finished = FBMutableFuture.future;
+
   return self;
 }
 
 #pragma mark Public
 
-- (FBFuture<FBFuture<NSNull *> *> *)startNotifier
+- (FBFuture<NSNull *> *)startNotifier
 {
-  NSError *error = nil;
-  self.deviceSet = [FBDeviceSet defaultSetWithLogger:_logger error:&error delegate:self];
-  if (!self.deviceSet) {
-    [FBFuture futureWithError:error];
+  for (id<FBiOSTargetSet> targetSet in self.targetSets) {
+    for (id<FBiOSTarget> target in targetSet.allTargets) {
+      [_targets addObject:[[FBiOSTargetStateUpdate alloc] initWithUDID:target.udid state:target.state type:target.targetType name:target.name osVersion:target.osVersion architecture:target.architecture]];
+    }
   }
-  FBSimulatorControlConfiguration *configuration = [FBSimulatorControlConfiguration
-    configurationWithDeviceSetPath:nil
-    options:0
-    logger:self.logger
-    reporter:nil];
-  FBSimulatorServiceContext *serviceContext = [FBSimulatorServiceContext sharedServiceContext];
-  SimDeviceSet *simDeviceSet = [serviceContext createDeviceSetWithConfiguration:configuration error:&error];
-  if (!simDeviceSet) {
-    return [FBFuture futureWithError:error];
+  if (![self writeTargets]) {
+    return self.finished;
   }
-  self.simulatorSet = [FBSimulatorSet setWithConfiguration:configuration deviceSet:simDeviceSet delegate:self logger:self.logger reporter:nil error:&error];
-  if (!self.simulatorSet) {
-    return [FBFuture futureWithError:error];
+  // If we're writing to a file, we also need to signal to stdout on the first update
+  if (self.filePath) {
+    NSData *jsonOutput = [NSJSONSerialization dataWithJSONObject:@{@"report_initial_state": @YES} options:0 error:nil];
+    NSMutableData *readyOutput = [NSMutableData dataWithData:jsonOutput];
+    [readyOutput appendData:[@"\n" dataUsingEncoding:NSUTF8StringEncoding]];
+    write(STDOUT_FILENO, readyOutput.bytes, readyOutput.length);
+    fflush(stdout);
   }
-  [self reportInitialState];
 
-  // The notifier never terminates, fallback here is a terrible hack to retain self
-  return [[FBFuture futureWithResult:FBMutableFuture.future] fallback:self];
+  return FBFuture.empty;
+}
+
+- (FBFuture<NSNull *> *)notifierDone
+{
+  return self.finished;
 }
 
 #pragma mark Private
 
-- (void)reportInitialState
-{
-  for (FBDevice *device in self.deviceSet.allDevices) {
-    [_targets addObject:[[FBiOSTargetStateUpdate alloc] initWithUDID:device.udid state:device.state type:FBiOSTargetTypeDevice name:device.name osVersion:device.osVersion architecture:device.architecture]];
-  }
-  for (FBSimulator *simulator in self.simulatorSet.allSimulators) {
-    [_targets addObject:[[FBiOSTargetStateUpdate alloc] initWithUDID:simulator.udid state:simulator.state type:FBiOSTargetTypeSimulator name:simulator.name osVersion:simulator.osVersion architecture:simulator.architecture]];
-  }
-  [self writeTargets];
-  NSData *jsonOutput = [NSJSONSerialization dataWithJSONObject:@{@"report_initial_state": @YES} options:0 error:nil];
-  NSMutableData *readyOutput = [NSMutableData dataWithData:jsonOutput];
-  [readyOutput appendData:[@"\n" dataUsingEncoding:NSUTF8StringEncoding]];
-  write(STDOUT_FILENO, readyOutput.bytes, readyOutput.length);
-  fflush(stdout);
-}
-
-- (void)writeTargets
+- (BOOL)writeTargets
 {
   NSError *error = nil;
   NSMutableArray<id<FBJSONSerializable>> *jsonArray = [[NSMutableArray alloc] init];
   for (FBiOSTargetStateUpdate *target in _targets.allObjects) {
-       [jsonArray addObject:target.jsonSerializableRepresentation];
+    [jsonArray addObject:target.jsonSerializableRepresentation];
   }
   NSData *data = [NSJSONSerialization dataWithJSONObject:jsonArray options:0 error:&error];
   if (!data) {
-    [self.logger logFormat:@"error writing update to consumer %@",error];
-    exit(1);
+    [self.finished resolveWithError:[[FBIDBError describeFormat:@"error writing update to consumer %@", error] build]];
+    return NO;
   }
-  if (![data writeToFile:_filePath options:NSDataWritingAtomic error:&error]) {
-    [self.logger logFormat:@"Failed writing updates %@",error];
-    exit(1);
-  }
+  NSString *filePath = self.filePath;
+  return filePath ? [self writeTargetsData:data toFilePath:filePath] : [self writeTargetsDataToStdOut:data];
 }
 
-#pragma mark FBiOSTargetSet Delegate Methods
+- (BOOL)writeTargetsData:(NSData *)data toFilePath:(NSString *)filePath
+{
+  NSError *error = nil;
+  if (![data writeToFile:filePath options:NSDataWritingAtomic error:&error]) {
+    [self.logger logFormat:@"Failed writing updates %@", error];
+    [self.finished resolveWithError:[[FBIDBError describeFormat:@"Failed writing updates %@", error] build]];
+    return NO;
+  }
+  return YES;
+}
 
+- (BOOL)writeTargetsDataToStdOut:(NSData *)data
+{
+  write(STDOUT_FILENO, data.bytes, data.length);
+  data = FBDataBuffer.newlineTerminal;
+  write(STDOUT_FILENO, data.bytes, data.length);
+  fflush(stdout);
+  return YES;
+}
+
+#pragma mark FBiOSTargetSetDelegate Methods
 
 - (void)targetDidUpdate:(FBiOSTargetStateUpdate *)update
 {
@@ -133,4 +166,5 @@
   [_targets addObject:update];
   [self writeTargets];
 }
+
 @end

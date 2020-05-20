@@ -4,10 +4,11 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+import dataclasses
 import json
 from argparse import ArgumentParser, Namespace
 
-from idb.cli import CompanionCommand
+from idb.cli import ClientCommand
 from idb.common.types import CrashLogQuery, IdbClient
 
 
@@ -51,7 +52,7 @@ def _build_query(arguments: Namespace) -> CrashLogQuery:
     )
 
 
-class CrashListCommand(CompanionCommand):
+class CrashListCommand(ClientCommand):
     @property
     def description(self) -> str:
         return "List the available crashes"
@@ -67,10 +68,10 @@ class CrashListCommand(CompanionCommand):
     async def run_with_client(self, args: Namespace, client: IdbClient) -> None:
         crashes = await client.crash_list(query=_build_query(args))
         for crash in crashes:
-            print(json.dumps(crash._asdict()))
+            print(json.dumps(dataclasses.asdict(crash)))
 
 
-class CrashShowCommand(CompanionCommand):
+class CrashShowCommand(ClientCommand):
     @property
     def description(self) -> str:
         return "Fetch a crash log"
@@ -88,7 +89,7 @@ class CrashShowCommand(CompanionCommand):
         print(crash.contents)
 
 
-class CrashDeleteCommand(CompanionCommand):
+class CrashDeleteCommand(ClientCommand):
     @property
     def description(self) -> str:
         return "Delete a crash log"
@@ -108,4 +109,4 @@ class CrashDeleteCommand(CompanionCommand):
     async def run_with_client(self, args: Namespace, client: IdbClient) -> None:
         crashes = await client.crash_delete(query=_build_query(args))
         for crash in crashes:
-            print(json.dumps(crash._asdict()))
+            print(json.dumps(dataclasses.asdict(crash)))
