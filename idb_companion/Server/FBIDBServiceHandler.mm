@@ -652,13 +652,21 @@ Status FBIDBServiceHandler::approve(ServerContext *context, const idb::ApproveRe
     @((int)idb::ApproveRequest_Permission::ApproveRequest_Permission_PHOTOS): FBSettingsApprovalServicePhotos,
     @((int)idb::ApproveRequest_Permission::ApproveRequest_Permission_CAMERA): FBSettingsApprovalServiceCamera,
     @((int)idb::ApproveRequest_Permission::ApproveRequest_Permission_CONTACTS): FBSettingsApprovalServiceContacts,
+    @((int)idb::ApproveRequest_Permission::ApproveRequest_Permission_URL): FBSettingsApprovalServiceUrl,
   };
   NSMutableSet<FBSettingsApprovalService> *services = NSMutableSet.set;
   for (int j = 0; j < request->permissions_size(); j++) {
     idb::ApproveRequest_Permission permission = request->permissions(j);
     [services addObject:mapping[@(permission)]];
   }
-  [[_commandExecutor approve:services for_application:nsstring_from_c_string(request->bundle_id())] block:&error];
+  if ([services containsObject:FBSettingsApprovalServiceUrl]) {
+    [services removeObject:FBSettingsApprovalServiceUrl];
+    [[_commandExecutor approve_deeplink:nsstring_from_c_string(request->scheme())
+                        for_application:nsstring_from_c_string(request->bundle_id())] block:&error];
+  }
+  if ([services count] > 0 && !error) {
+    [[_commandExecutor approve:services for_application:nsstring_from_c_string(request->bundle_id())] block:&error];
+  }
   if (error) {
     return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
   }
@@ -939,7 +947,7 @@ Status FBIDBServiceHandler::pull(ServerContext *context, const ::idb::PullReques
   NSString *path = nsstring_from_c_string(request->src_path());
   NSError *error = nil;
   if (request->dst_path().length() > 0) {
-    NSString *filePath = [[_commandExecutor pull_file_path:path in_container_of_application:nsstring_from_c_string(request->bundle_id()) destination_path:nsstring_from_c_string(request->dst_path())] block:&error];
+    NSString *filePath = [[_commandExecutor pull_file_path:path destination_path:nsstring_from_c_string(request->dst_path()) in_container_of_application:nsstring_from_c_string(request->bundle_id()) ] block:&error];
     if (error) {
       return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
     }
@@ -947,7 +955,7 @@ Status FBIDBServiceHandler::pull(ServerContext *context, const ::idb::PullReques
   } else {
     NSURL *url = [_commandExecutor.temporaryDirectory temporaryDirectory];
     NSString *tempPath = [url.path stringByAppendingPathComponent:path.lastPathComponent];
-    NSString *filePath = [[_commandExecutor pull_file_path:path in_container_of_application:nsstring_from_c_string(request->bundle_id()) destination_path:tempPath] block:&error];
+    NSString *filePath = [[_commandExecutor pull_file_path:path destination_path:tempPath in_container_of_application:nsstring_from_c_string(request->bundle_id())] block:&error];
     if (error) {
       return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
     }
@@ -964,11 +972,12 @@ Status FBIDBServiceHandler::describe(ServerContext *context, const idb::TargetDe
   FBiOSTargetScreenInfo *screenInfo = _target.screenInfo;
   idb::TargetDescription *description = response->mutable_target_description();
   if (screenInfo) {
-    description->mutable_screen_dimensions()->set_width(screenInfo.widthPixels);
-    description->mutable_screen_dimensions()->set_height(screenInfo.heightPixels);
-    description->mutable_screen_dimensions()->set_height_points(screenInfo.heightPixels/screenInfo.scale);
-    description->mutable_screen_dimensions()->set_width_points(screenInfo.widthPixels/screenInfo.scale);
-    description->mutable_screen_dimensions()->set_density(screenInfo.scale);
+    idb::ScreenDimensions *dimensions = description->mutable_screen_dimensions();
+    dimensions->set_width(screenInfo.widthPixels);
+    dimensions->set_height(screenInfo.heightPixels);
+    dimensions->set_height_points(screenInfo.heightPixels/screenInfo.scale);
+    dimensions->set_width_points(screenInfo.widthPixels/screenInfo.scale);
+    dimensions->set_density(screenInfo.scale);
   }
   description->set_udid(_target.udid.UTF8String);
   description->set_name(_target.name.UTF8String);
@@ -976,9 +985,6 @@ Status FBIDBServiceHandler::describe(ServerContext *context, const idb::TargetDe
   description->set_target_type(FBiOSTargetTypeStringsFromTargetType(_target.targetType).firstObject.lowercaseString.UTF8String);
   description->set_os_version(_target.osVersion.name.UTF8String);
   description->set_architecture(_target.architecture.UTF8String);
-  idb::CompanionInfo *companionInfo = description->mutable_companion_info();
-  companionInfo->set_grpc_port(portsConfig.grpcPort);
-  companionInfo->set_host(NSProcessInfo.processInfo.hostName.UTF8String);
   return Status::OK;
 }}
 

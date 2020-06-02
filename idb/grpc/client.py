@@ -46,6 +46,7 @@ from idb.common.types import (
     AccessibilityInfo,
     Address,
     AppProcessState,
+    CompanionInfo,
     CrashLog,
     CrashLogInfo,
     CrashLogQuery,
@@ -138,6 +139,7 @@ APPROVE_MAP: Dict[str, Any] = {
     "photos": ApproveRequest.PHOTOS,
     "camera": ApproveRequest.CAMERA,
     "contacts": ApproveRequest.CONTACTS,
+    "url": ApproveRequest.URL,
 }
 
 
@@ -314,11 +316,14 @@ class IdbClient(IdbClientBase):
                 )
 
     @log_and_handle_exceptions
-    async def approve(self, bundle_id: str, permissions: Set[str]) -> None:
+    async def approve(
+        self, bundle_id: str, permissions: Set[str], scheme: Optional[str] = None
+    ) -> None:
         await self.stub.approve(
             ApproveRequest(
                 bundle_id=bundle_id,
                 permissions=[APPROVE_MAP[permission] for permission in permissions],
+                scheme=scheme,
             )
         )
 
@@ -353,7 +358,16 @@ class IdbClient(IdbClientBase):
     @log_and_handle_exceptions
     async def describe(self) -> TargetDescription:
         response = await self.stub.describe(TargetDescriptionRequest())
-        return target_to_py(target=response.target_description, companion_info=None)
+        target = response.target_description
+        return target_to_py(
+            target=target,
+            companion=CompanionInfo(
+                host=self.address.host,
+                port=self.address.port,
+                udid=target.udid,
+                is_local=self.is_local,
+            ),
+        )
 
     @log_and_handle_exceptions
     async def focus(self) -> None:
@@ -770,6 +784,7 @@ class IdbClient(IdbClientBase):
                 for line in [
                     line
                     for lines in response.log_output
+                    # pyre-fixme[10]: Name `lines` is used but not defined.
                     for line in lines.splitlines(keepends=True)
                 ]:
                     self._log_from_companion(line)

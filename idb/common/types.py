@@ -15,6 +15,7 @@ from typing import (
     AsyncIterator,
     Dict,
     List,
+    Mapping,
     Optional,
     Set,
     Tuple,
@@ -31,6 +32,11 @@ class IdbException(Exception):
 
 class IdbConnectionException(Exception):
     pass
+
+
+class TargetType(Enum):
+    DEVICE = 1
+    SIMULATOR = 2
 
 
 @dataclass(frozen=True)
@@ -99,6 +105,9 @@ class ScreenDimensions:
     height_points: Optional[int]
 
 
+DeviceDetails = Mapping[str, Union[int, str]]
+
+
 @dataclass(frozen=True)
 class TargetDescription:
     udid: str
@@ -109,6 +118,8 @@ class TargetDescription:
     architecture: Optional[str]
     companion_info: Optional[CompanionInfo]
     screen_dimensions: Optional[ScreenDimensions]
+    model: Optional[str] = None
+    device: Optional[DeviceDetails] = None
 
 
 @dataclass(frozen=True)
@@ -360,7 +371,9 @@ class IdbClient:
     async def set_location(self, latitude: float, longitude: float) -> None:
         pass
 
-    async def approve(self, bundle_id: str, permissions: Set[str]) -> None:
+    async def approve(
+        self, bundle_id: str, permissions: Set[str], scheme: Optional[str] = None
+    ) -> None:
         pass
 
     async def record_video(self, stop: asyncio.Event, output_file: str) -> None:

@@ -5,15 +5,15 @@
 # LICENSE file in the root directory of this source tree.
 
 import asyncio
-import json
 import logging
 import subprocess
 from logging import Logger
 from sys import platform
 from typing import AsyncContextManager, List, Optional
 
+from idb.common.format import target_description_from_json
 from idb.common.logging import log_call
-from idb.common.types import IdbException
+from idb.common.types import IdbException, TargetDescription
 from idb.utils.contextlib import asynccontextmanager
 from idb.utils.typing import none_throws
 
@@ -103,12 +103,11 @@ class Companion:
         return await self._run_companion_command(arguments=[f"--{command}", udid])
 
     @log_call()
-    async def create(self, device_type: str, os_version: str) -> str:
+    async def create(self, device_type: str, os_version: str) -> TargetDescription:
         output = await self._run_companion_command(
             arguments=["--create", f"{device_type},{os_version}"]
         )
-        created = json.loads(output.splitlines()[-1])
-        return created["udid"]
+        return target_description_from_json(output.splitlines()[-1])
 
     @log_call()
     async def boot(self, udid: str) -> None:
@@ -120,12 +119,11 @@ class Companion:
             ["--headless", "1", "--boot", udid]
         ) as process:
             # The first line written to stdout is information about the booted sim.
-            line = await none_throws(process.stdout).readline()
-            target = json.loads(line.decode())
-            assert target["udid"] == udid
-            self._logger.info(f"{udid} is now booted")
+            line = (await none_throws(process.stdout).readline()).decode()
+            target = target_description_from_json(line)
+            self._logger.info(f"{target} is now booted")
             yield None
-            self._logger.info(f"Done with {udid}. Shutting down.")
+            self._logger.info(f"Done with {target}. Shutting down.")
 
     @log_call()
     async def shutdown(self, udid: str) -> None:
@@ -136,10 +134,9 @@ class Companion:
         await self._run_udid_command(udid=udid, command="erase")
 
     @log_call()
-    async def clone(self, udid: str) -> str:
+    async def clone(self, udid: str) -> TargetDescription:
         output = await self._run_udid_command(udid=udid, command="clone")
-        cloned = json.loads(output.splitlines()[-1])
-        return cloned["udid"]
+        return target_description_from_json(output.splitlines()[-1])
 
     @log_call()
     async def delete(self, udid: Optional[str]) -> None:

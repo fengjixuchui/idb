@@ -17,7 +17,6 @@ from idb.common.types import (
     InstalledTestInfo,
     TargetDescription,
     TestActivity,
-    TestRunFailureInfo,
     TestRunInfo,
 )
 from treelib import Tree
@@ -191,6 +190,8 @@ def json_data_target_info(target: TargetDescription) -> Dict[str, Any]:
         data["host"] = target.companion_info.host
         data["port"] = target.companion_info.port
         data["is_local"] = target.companion_info.is_local
+    if target.device is not None:
+        data["device"] = target.device
     return data
 
 
@@ -227,24 +228,17 @@ def target_description_from_json(data: str) -> TargetDescription:
 
 
 def target_description_from_dictionary(parsed: Dict[str, Any]) -> TargetDescription:
-    companion_info_fields = ["host", "port", "is_local", "udid"]
-    companion_info = None
-    if all((field in parsed for field in companion_info_fields)):
-        companion_info = CompanionInfo(
-            host=parsed["host"],
-            port=parsed["port"],
-            is_local=parsed["is_local"],
-            udid=parsed["udid"],
-        )
     return TargetDescription(
-        name=parsed["name"],
         udid=parsed["udid"],
-        state=parsed["state"],
-        target_type=parsed["type"],
-        os_version=parsed["os_version"],
-        architecture=parsed["architecture"],
-        companion_info=companion_info,
+        name=parsed["name"],
+        model=parsed.get("model"),
+        state=parsed.get("state"),
+        target_type=parsed.get("type"),
+        os_version=parsed.get("os_version"),
+        architecture=parsed.get("architecture"),
+        companion_info=None,
         screen_dimensions=None,
+        device=parsed.get("device"),
     )
 
 

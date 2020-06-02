@@ -28,9 +28,10 @@ Usage: \n \
     --boot UDID                Boots the simulator with the specified UDID.\n\
     --shutdown UDID            Shuts down the simulator with the specified UDID.\n\
     --erase UDID               Erases the simulator with the specified UDID.\n\
-    --delete UDID|all          Deletes the simulator with the specified UDID, or 'all' to delete all simulators in the set. \n\
+    --delete UDID|all          Deletes the simulator with the specified UDID, or 'all' to delete all simulators in the set.\n\
     --create VALUE             Creates a simulator using the VALUE argument like \"iPhone X,iOS 12.4\"\n\
     --clone UDID               Clones a simulator by a given UDID\n\
+    --clone-destination-set    A path to the destination device set in a clone operation, --device-set-path specifies the source simulator.\n\
     --notify PATH|stdout       Launches a companion notifier which will stream availability updates to the specified path, or stdout.\n\
     --list 1                   Lists all available devices/simulators in the current context.\n\
     --help                     Show this help message and exit.\n\
@@ -63,20 +64,25 @@ static void WriteTargetToStdOut(id<FBiOSTarget> target)
   WriteJSONToStdOut([[FBiOSTargetStateUpdate alloc] initWithTarget:target].jsonSerializableRepresentation);
 }
 
-static FBFuture<FBSimulatorSet *> *SimulatorSet(NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
+static FBFuture<FBSimulatorSet *> *SimulatorSetWithPath(NSString *deviceSetPath, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
 {
   // Give a more meaningful message if we can't load the frameworks.
   NSError *error = nil;
   if(![FBSimulatorControlFrameworkLoader.essentialFrameworks loadPrivateFrameworks:logger error:&error]) {
     return [FBFuture futureWithError:error];
   }
-  NSString *deviceSetPath = [userDefaults stringForKey:@"-device-set-path"];
   FBSimulatorControlConfiguration *configuration = [FBSimulatorControlConfiguration configurationWithDeviceSetPath:deviceSetPath options:0 logger:logger reporter:reporter];
   FBSimulatorControl *control = [FBSimulatorControl withConfiguration:configuration error:&error];
   if (!control) {
     return [FBFuture futureWithError:error];
   }
   return [FBFuture futureWithResult:control.set];
+}
+
+static FBFuture<FBSimulatorSet *> *SimulatorSet(NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
+{
+  NSString *deviceSetPath = [userDefaults stringForKey:@"-device-set-path"];
+  return SimulatorSetWithPath(deviceSetPath, logger, reporter);
 }
 
 static FBFuture<FBDeviceSet *> *DeviceSet(id<FBControlCoreLogger> logger)
@@ -116,31 +122,24 @@ static FBFuture<NSArray<id<FBiOSTargetSet>> *> *DefaultTargetSets(NSUserDefaults
   ]];
 }
 
-static FBFuture<id<FBiOSTarget>> *TargetForUDID(NSString *udid, NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
+static FBFuture<id<FBiOSTarget>> *TargetForUDID(NSString *udid, NSUserDefaults *userDefaults, BOOL warmUp, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
 {
   if ([udid isEqualToString:@"mac"]) {
     udid = [FBMacDevice resolveDeviceUDID];
   }
   return [DefaultTargetSets(userDefaults, logger, reporter)
     onQueue:dispatch_get_main_queue() fmap:^(NSArray<id<FBiOSTargetSet>> *targetSets) {
-      NSError *error = nil;
-      id<FBiOSTarget> target = [FBiOSTargetProvider targetWithUDID:udid targetSets:targetSets logger:logger error:&error];
-      if (!target) {
-        return [FBFuture futureWithError:error];
-      }
-      return [FBFuture futureWithResult:target];
+      return [FBiOSTargetProvider targetWithUDID:udid targetSets:targetSets warmUp:warmUp logger:logger];
     }];
 }
 
 static FBFuture<FBSimulator *> *SimulatorFuture(NSString *udid, NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
 {
-  return [SimulatorSet(userDefaults, logger, reporter)
+  return [[SimulatorSet(userDefaults, logger, reporter)
     onQueue:dispatch_get_main_queue() fmap:^(FBSimulatorSet *simulatorSet) {
-      NSError *error = nil;
-      id<FBiOSTarget> target = [FBiOSTargetProvider targetWithUDID:udid targetSets:@[simulatorSet] logger:logger error:&error];
-      if (!target) {
-        return [FBFuture futureWithError:error];
-      }
+      return [FBiOSTargetProvider targetWithUDID:udid targetSets:@[simulatorSet] warmUp:NO logger:logger];
+    }]
+    onQueue:dispatch_get_main_queue() fmap:^(id<FBiOSTarget> target) {
       id<FBSimulatorLifecycleCommands> commands = (id<FBSimulatorLifecycleCommands>) target;
       if (![commands conformsToProtocol:@protocol(FBSimulatorLifecycleCommands)]) {
         return [[FBIDBError
@@ -148,7 +147,7 @@ static FBFuture<FBSimulator *> *SimulatorFuture(NSString *udid, NSUserDefaults *
           failFuture];
       }
       return [FBFuture futureWithResult:commands];
-  }];
+    }];
 }
 
 static FBFuture<NSNull *> *TargetOfflineFuture(id<FBiOSTarget> target, id<FBControlCoreLogger> logger)
@@ -269,9 +268,16 @@ static FBFuture<NSNull *> *CreateFuture(NSString *create, NSUserDefaults *userDe
 
 static FBFuture<NSNull *> *CloneFuture(NSString *udid, NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
 {
-  return [[SimulatorFuture(udid, userDefaults, logger, reporter)
-    onQueue:dispatch_get_main_queue() fmap:^ FBFuture<FBSimulator *> * (FBSimulator *base) {
-      return [base.set cloneSimulator:base];
+  NSString *destinationSet = [userDefaults stringForKey:@"-clone-destination-set"];
+  return [[[FBFuture
+    futureWithFutures:@[
+      SimulatorFuture(udid, userDefaults, logger, reporter),
+      SimulatorSetWithPath(destinationSet, logger, reporter),
+    ]]
+    onQueue:dispatch_get_main_queue() fmap:^ FBFuture<FBSimulator *> * (NSArray<id> *tuple) {
+      FBSimulator *base = tuple[0];
+      FBSimulatorSet *destination = tuple[1];
+      return [base.set cloneSimulator:base toDeviceSet:destination];
     }]
     onQueue:dispatch_get_main_queue() map:^(FBSimulator *cloned) {
       WriteTargetToStdOut(cloned);
@@ -282,7 +288,7 @@ static FBFuture<NSNull *> *CloneFuture(NSString *udid, NSUserDefaults *userDefau
 static FBFuture<FBFuture<NSNull *> *> *CompanionServerFuture(NSString *udid, NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
 {
   BOOL terminateOffline = [userDefaults boolForKey:@"-terminate-offline"];
-  return [TargetForUDID(udid, userDefaults, logger, reporter)
+  return [TargetForUDID(udid, userDefaults, YES, logger, reporter)
     onQueue:dispatch_get_main_queue() fmap:^(id<FBiOSTarget> target) {
       [reporter addMetadata:@{@"udid": udid}];
       [reporter report:[FBEventReporterSubject subjectForEvent:FBEventNameLaunched]];
