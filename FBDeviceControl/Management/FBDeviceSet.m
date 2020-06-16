@@ -19,6 +19,7 @@
 #import "FBDeviceControlFrameworkLoader.h"
 #import "FBDevice.h"
 #import "FBDevice+Private.h"
+#import "FBAMDeviceManager.h"
 #import "FBAMDevice.h"
 #import "FBAMDevice+Private.h"
 #import "FBDeviceInflationStrategy.h"
@@ -71,6 +72,11 @@
   [self unsubscribeFromDeviceNotifications];
 }
 
+- (NSString *)description
+{
+  return [NSString stringWithFormat:@"FBDeviceSet: %@", [FBCollectionInformation oneLineDescriptionFromArray:self.allDevices]];
+}
+
 #pragma mark Querying
 
 - (NSArray<FBDevice *> *)query:(FBiOSTargetQuery *)query
@@ -98,7 +104,7 @@
 
 #pragma mark FBiOSTargetSet Implementation
 
-- (NSArray<id<FBiOSTarget>> *)allTargets
+- (NSArray<id<FBiOSTarget>> *)allTargetInfos
 {
   return self.allDevices;
 }
@@ -112,28 +118,12 @@
 
 - (void)subscribeToDeviceNotifications
 {
-  [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(deviceAttachedNotification:) name:FBAMDeviceNotificationNameDeviceAttached object:nil];
-  [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(deviceDetachedNotification:) name:FBAMDeviceNotificationNameDeviceDetached object:nil];
+  FBAMDeviceManager.sharedManager.delegate = self;
 }
 
 - (void)unsubscribeFromDeviceNotifications
 {
-  [NSNotificationCenter.defaultCenter removeObserver:self name:FBAMDeviceNotificationNameDeviceAttached object:nil];
-  [NSNotificationCenter.defaultCenter removeObserver:self name:FBAMDeviceNotificationNameDeviceDetached object:nil];
-}
-
-- (void)deviceAttachedNotification:(NSNotification *)notification
-{
-  [self recalculateAllDevices];
-  FBDevice *device = [self deviceWithUDID:notification.object];
-  [_delegate targetDidUpdate:[[FBiOSTargetStateUpdate alloc] initWithTarget:device]];
-}
-
-- (void)deviceDetachedNotification:(NSNotification *)notification
-{
-  FBDevice *device = [self deviceWithUDID:notification.object];
-  [self recalculateAllDevices];
-  [_delegate targetDidUpdate:[[FBiOSTargetStateUpdate alloc] initWithTarget:device]];
+  FBAMDeviceManager.sharedManager.delegate = nil;
 }
 
 - (void)recalculateAllDevices
@@ -141,6 +131,23 @@
   _allDevices = [[self.inflationStrategy
     inflateFromDevices:FBAMDevice.allDevices existingDevices:_allDevices]
     sortedArrayUsingSelector:@selector(compare:)];
+}
+
+#pragma mark FBiOSTargetSetDelegate Implementation
+
+- (void)targetAdded:(id<FBiOSTargetInfo>)targetInfo inTargetSet:(id<FBiOSTargetSet>)targetSet
+{
+  [self.delegate targetAdded:targetInfo inTargetSet:targetSet];
+}
+
+- (void)targetRemoved:(id<FBiOSTargetInfo>)targetInfo inTargetSet:(id<FBiOSTargetSet>)targetSet
+{
+  [self.delegate targetRemoved:targetInfo inTargetSet:targetSet];
+}
+
+- (void)targetUpdated:(id<FBiOSTargetInfo>)targetInfo inTargetSet:(id<FBiOSTargetSet>)targetSet
+{
+  [self.delegate targetUpdated:targetInfo inTargetSet:targetSet];
 }
 
 @end

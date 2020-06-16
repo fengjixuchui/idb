@@ -5,10 +5,9 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-#import "FBiOSTargetStateUpdate.h"
-#import "FBiOSTargetConfiguration.h"
+#import "FBiOSTargetDescription.h"
 
-@interface FBiOSTargetStateUpdate ()
+@interface FBiOSTargetDescription ()
 
 @property (nonatomic, assign, readonly) FBiOSTargetState state;
 @property (nonatomic, assign, readonly) FBiOSTargetType targetType;
@@ -21,7 +20,7 @@
 
 @end
 
-@implementation FBiOSTargetStateUpdate
+@implementation FBiOSTargetDescription
 
 static NSString *FBiOSTargetTypeStringFromTargetType(FBiOSTargetType targetType)
 {
@@ -35,7 +34,7 @@ static NSString *FBiOSTargetTypeStringFromTargetType(FBiOSTargetType targetType)
   return nil;
 }
 
-- (instancetype)initWithTarget:(id<FBiOSTarget>)target
+- (instancetype)initWithTarget:(id<FBiOSTargetInfo>)target
 {
   self = [super init];
   if (!self) {
@@ -71,13 +70,13 @@ static NSString *const KeyUDID = @"udid";
 - (NSDictionary<NSString *, id> *)jsonSerializableRepresentation
 {
   NSMutableDictionary<NSString *, id> *representation = [NSMutableDictionary dictionaryWithDictionary:@{
-    KeyArchitecture : self.architecture ?: @"unknown",
-    KeyModel : self.model,
-    KeyName : self.name ?: @"unknown",
-    KeyOSVersion : self.osVersion.name ?: @"unknown",
+    KeyArchitecture : self.architecture ?: NSNull.null,
+    KeyModel : self.model ?: NSNull.null,
+    KeyName : self.name ?: NSNull.null,
+    KeyOSVersion : self.osVersion.name ?: NSNull.null,
     KeyState : FBiOSTargetStateStringFromState(self.state),
     KeyType : FBiOSTargetTypeStringFromTargetType(self.targetType),
-    KeyUDID : self.udid,
+    KeyUDID : self.udid ?: NSNull.null,
   }];
   [representation addEntriesFromDictionary:self.extendedInformation];
   return representation;

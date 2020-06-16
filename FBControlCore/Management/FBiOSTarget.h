@@ -39,6 +39,9 @@ typedef NS_ENUM(NSUInteger, FBiOSTargetState) {
   FBiOSTargetStateBooting = 2,
   FBiOSTargetStateBooted = 3,
   FBiOSTargetStateShuttingDown = 4,
+  FBiOSTargetStateDFU = 5,
+  FBiOSTargetStateRecovery = 6,
+  FBiOSTargetStateRestoreOS = 7,
   FBiOSTargetStateUnknown = 99,
 };
 
@@ -62,12 +65,70 @@ extern FBiOSTargetStateString const FBiOSTargetStateStringShutdown;
 extern FBiOSTargetStateString const FBiOSTargetStateStringBooting;
 extern FBiOSTargetStateString const FBiOSTargetStateStringBooted;
 extern FBiOSTargetStateString const FBiOSTargetStateStringShuttingDown;
+extern FBiOSTargetStateString const FBiOSTargetStateStringDFU;
+extern FBiOSTargetStateString const FBiOSTargetStateStringRecovery;
+extern FBiOSTargetStateString const FBiOSTargetStateStringRestoreOS;
 extern FBiOSTargetStateString const FBiOSTargetStateStringUnknown;
 
 /**
- Common Properties of Devices & Simulators.
+ A protocol that defines an informational target.
  */
-@protocol FBiOSTarget <NSObject, FBJSONSerializable, FBDebugDescribeable, FBApplicationCommands, FBBitmapStreamingCommands, FBCrashLogCommands, FBLogCommands, FBScreenshotCommands, FBVideoRecordingCommands, FBXCTestCommands, FBInstrumentsCommands, FBDebuggerCommands>
+@protocol FBiOSTargetInfo <NSObject>
+
+/**
+ A Unique Identifier that describes this iOS Target.
+ */
+@property (nonatomic, copy, readonly) NSString *uniqueIdentifier;
+
+/**
+ The "Unique Device Identifier" of the iOS Target.
+ This may be distinct from the uniqueIdentifier.
+ */
+@property (nonatomic, copy, readonly) NSString *udid;
+
+/**
+ The Name of the iOS Target. This is the name given by the user, such as "Ada's iPhone"
+ */
+@property (nonatomic, copy, readonly) NSString *name;
+
+/**
+ The Device Type of the Target.
+ */
+@property (nonatomic, copy, readonly) FBDeviceType *deviceType;
+
+/**
+ The Architecture of the iOS Target
+ */
+@property (nonatomic, copy, readonly) FBArchitecture architecture;
+
+/**
+ The OS Version of the Target.
+ */
+@property (nonatomic, copy, readonly) FBOSVersion *osVersion;
+
+/**
+ A dictionary containing per-target-type information that is unique to them.
+ For example iOS Devices have additional metadata that is not present on Simulators.
+ This dictionary must be JSON-Serializable.
+ */
+@property (nonatomic, copy, readonly) NSDictionary<NSString *, id> *extendedInformation;
+
+/**
+ The Type of the iOS Target
+ */
+@property (nonatomic, assign, readonly) FBiOSTargetType targetType;
+
+/**
+ The State of the iOS Target. Currently only applies to Simulators.
+ */
+@property (nonatomic, assign, readonly) FBiOSTargetState state;
+
+@end
+
+/**
+ A protocol that defines an interactible and informational target.
+ */
+@protocol FBiOSTarget <NSObject, FBiOSTargetInfo,  FBJSONSerializable, FBDebugDescribeable, FBApplicationCommands, FBBitmapStreamingCommands, FBCrashLogCommands, FBLogCommands, FBScreenshotCommands, FBVideoRecordingCommands, FBXCTestCommands, FBInstrumentsCommands, FBDebuggerCommands>
 
 /**
  The Target's Logger.
@@ -79,15 +140,6 @@ extern FBiOSTargetStateString const FBiOSTargetStateStringUnknown;
  */
 @property (nonatomic, strong, readonly) NSArray<Class> *actionClasses;
 
-/**
- The Unique Device Identifier of the iOS Target.
- */
-@property (nonatomic, copy, readonly) NSString *udid;
-
-/**
- The Name of the iOS Target. This is the name given by the user, such as "Ada's iPhone"
- */
-@property (nonatomic, copy, readonly) NSString *name;
 
 /**
  The Directory that the target uses to store per-target files on the host.
@@ -98,31 +150,6 @@ extern FBiOSTargetStateString const FBiOSTargetStateStringUnknown;
  The Diagnostics instance for the Target.
  */
 @property (nonatomic, strong, readonly) FBiOSTargetDiagnostics *diagnostics;
-
-/**
- The State of the iOS Target. Currently only applies to Simulators.
- */
-@property (nonatomic, assign, readonly) FBiOSTargetState state;
-
-/**
- The Type of the iOS Target
- */
-@property (nonatomic, assign, readonly) FBiOSTargetType targetType;
-
-/**
- The Architecture of the iOS Target
- */
-@property (nonatomic, copy, readonly) FBArchitecture architecture;
-
-/**
- The Device Type of the Target.
- */
-@property (nonatomic, copy, readonly) FBDeviceType *deviceType;
-
-/**
- The OS Version of the Target.
- */
-@property (nonatomic, copy, readonly) FBOSVersion *osVersion;
 
 /**
  The Screen Info for the Target.
@@ -151,13 +178,6 @@ extern FBiOSTargetStateString const FBiOSTargetStateStringUnknown;
  Examples of these operations are transforming an immutable data structure.
  */
 @property (nonatomic, strong, readonly) dispatch_queue_t asyncQueue;
-
-/**
- A dictionary containing per-target-type information that is unique to them.
- For example iOS Devices have additional metadata that is not present on Simulators.
- This dictionary must be JSON-Serializable.
- */
-@property (nonatomic, copy, readonly) NSDictionary<NSString *, id> *extendedInformation;
 
 /**
  A Comparison Method for `sortedArrayUsingSelector:`

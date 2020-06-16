@@ -6,14 +6,15 @@
  */
 
 #import <Foundation/Foundation.h>
-#import <FBControlCore/FBiOSTarget.h>
+
+#import <FBControlCore/FBControlCore.h>
 
 @protocol FBJSONSerializable, FBJSONDeserializable;
 
 /**
  A value type that holds values for serializing a target information in idb
  */
-@interface FBiOSTargetStateUpdate : NSObject <FBJSONSerializable, NSCopying>
+@interface FBiOSTargetDescription : NSObject <FBJSONSerializable, NSCopying>
 
 /**
  The Designated Initializer.
@@ -21,7 +22,7 @@
  @param target the target to construct an update for.
  @return a new Target Update
  */
-- (instancetype)initWithTarget:(id<FBiOSTarget>)target;
+- (instancetype)initWithTarget:(id<FBiOSTargetInfo>)target;
 
 /**
  The UDID of the Target.

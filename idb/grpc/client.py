@@ -61,6 +61,7 @@ from idb.common.types import (
     InstalledTestInfo,
     InstrumentsTimings,
     LoggingMetadata,
+    Permission,
     TargetDescription,
     TestRunInfo,
 )
@@ -135,11 +136,12 @@ from idb.grpc.xctest import (
 from idb.utils.contextlib import asynccontextmanager
 
 
-APPROVE_MAP: Dict[str, Any] = {
-    "photos": ApproveRequest.PHOTOS,
-    "camera": ApproveRequest.CAMERA,
-    "contacts": ApproveRequest.CONTACTS,
-    "url": ApproveRequest.URL,
+APPROVE_MAP: Dict[Permission, ApproveRequest] = {
+    Permission.PHOTOS: ApproveRequest.PHOTOS,
+    Permission.CAMERA: ApproveRequest.CAMERA,
+    Permission.CONTACTS: ApproveRequest.CONTACTS,
+    Permission.URL: ApproveRequest.URL,
+    Permission.LOCATION: ApproveRequest.LOCATION,
 }
 
 
@@ -317,7 +319,7 @@ class IdbClient(IdbClientBase):
 
     @log_and_handle_exceptions
     async def approve(
-        self, bundle_id: str, permissions: Set[str], scheme: Optional[str] = None
+        self, bundle_id: str, permissions: Set[Permission], scheme: Optional[str] = None
     ) -> None:
         await self.stub.approve(
             ApproveRequest(

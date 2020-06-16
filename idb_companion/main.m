@@ -20,6 +20,7 @@
 #import "FBiOSTargetStateChangeNotifier.h"
 #import "FBStorageUtils.h"
 #import "FBTemporaryDirectory.h"
+#import "FBiOSTargetDescription.h"
 
 const char *kUsageHelpMessage = "\
 Usage: \n \
@@ -38,6 +39,7 @@ Usage: \n \
 \n\
   Options:\n\
     --grpc-port PORT           Port to start the grpc companion server on (default: 10882).\n\
+    --grpc-domain-sock PATH    Unix Domain Socket path to start the companion server on, will superceed TCP binding via --grpc-port.\n\
     --debug-port PORT          Port to connect debugger on (default: 10881).\n\
     --log-file-path PATH       Path to write a log file to e.g ./output.log (default: logs to stdErr).\n\
     --device-set-path PATH     Path to a custom Simulator device set.\n\
@@ -59,9 +61,9 @@ static void WriteJSONToStdOut(id json)
   fflush(stdout);
 }
 
-static void WriteTargetToStdOut(id<FBiOSTarget> target)
+static void WriteTargetToStdOut(id<FBiOSTargetInfo> target)
 {
-  WriteJSONToStdOut([[FBiOSTargetStateUpdate alloc] initWithTarget:target].jsonSerializableRepresentation);
+  WriteJSONToStdOut([[FBiOSTargetDescription alloc] initWithTarget:target].jsonSerializableRepresentation);
 }
 
 static FBFuture<FBSimulatorSet *> *SimulatorSetWithPath(NSString *deviceSetPath, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
@@ -99,6 +101,21 @@ static FBFuture<FBDeviceSet *> *DeviceSet(id<FBControlCoreLogger> logger)
   return [FBFuture futureWithResult:deviceSet];
 }
 
+static FBFuture<FBAMRestorableDeviceManager *> *RestorableDeviceSet(id<FBControlCoreLogger> logger)
+{
+  // Give a more meaningful message if we can't load the frameworks.
+  NSError *error = nil;
+  if(![FBDeviceControlFrameworkLoader.new loadPrivateFrameworks:logger error:&error]) {
+    return [FBFuture futureWithError:error];
+  }
+  logger = [logger withName:@"restorable_device_manager"];
+  FBDeviceManager *manager = [[FBAMRestorableDeviceManager alloc] initWithCalls:FBDeviceControlFrameworkLoader.amDeviceCalls queue:dispatch_get_main_queue() logger:logger];
+  if (![manager startListeningWithError:&error]) {
+    return [FBFuture futureWithError:error];
+  }
+  return [FBFuture futureWithResult:manager];
+}
+
 static FBFuture<NSArray<id<FBiOSTargetSet>> *> *DefaultTargetSets(NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
 {
   NSString *only = [userDefaults stringForKey:@"-only"];
@@ -109,7 +126,10 @@ static FBFuture<NSArray<id<FBiOSTargetSet>> *> *DefaultTargetSets(NSUserDefaults
     }
     if ([only.lowercaseString containsString:@"device"]) {
       [logger log:@"'--only' set for Devices"];
-      return [FBFuture futureWithFutures:@[DeviceSet(logger)]];
+      return [FBFuture futureWithFutures:@[
+        DeviceSet(logger),
+        RestorableDeviceSet(logger),
+      ]];
     }
     return [[FBIDBError
       describeFormat:@"%@ is not a valid argument for '--only'", only]
@@ -119,6 +139,7 @@ static FBFuture<NSArray<id<FBiOSTargetSet>> *> *DefaultTargetSets(NSUserDefaults
   return [FBFuture futureWithFutures:@[
     SimulatorSet(userDefaults, logger, reporter),
     DeviceSet(logger),
+    RestorableDeviceSet(logger),
   ]];
 }
 
@@ -238,8 +259,8 @@ static FBFuture<NSNull *> *ListFuture(NSUserDefaults *userDefaults, id<FBControl
   return [DefaultTargetSets(userDefaults, logger, reporter)
     onQueue:dispatch_get_main_queue() map:^ NSNull * (NSArray<id<FBiOSTargetSet>> *targetSets) {
       for (id<FBiOSTargetSet> targetSet in targetSets) {
-        for (id<FBiOSTarget> target in targetSet.allTargets) {
-          WriteTargetToStdOut(target);
+        for (id<FBiOSTargetInfo> targetInfo in targetSet.allTargetInfos) {
+          WriteTargetToStdOut(targetInfo);
         }
       }
       return NSNull.null;
@@ -302,8 +323,8 @@ static FBFuture<FBFuture<NSNull *> *> *CompanionServerFuture(NSString *udid, NSU
       }
       return [[server
         start]
-        onQueue:target.workQueue map:^ FBFuture * (NSNumber *port) {
-          WriteJSONToStdOut(@{@"grpc_port": port});
+        onQueue:target.workQueue map:^ FBFuture * (NSDictionary<NSString *, id> *serverDescription) {
+          WriteJSONToStdOut(serverDescription);
           FBFuture<NSNull *> *completed = server.completed;
           if (terminateOffline) {
             [logger.info logFormat:@"Companion will terminate when target goes offline"];

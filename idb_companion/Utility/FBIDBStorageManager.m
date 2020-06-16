@@ -484,7 +484,7 @@ static NSString *const XctestRunExtension = @"xctestrun";
 
   // Copy all files
   for (NSURL *url in contents) {
-    if (![NSFileManager.defaultManager moveItemAtURL:url toURL:[newPath URLByAppendingPathComponent:url.lastPathComponent] error:&error]) {
+    if (![NSFileManager.defaultManager copyItemAtURL:url toURL:[newPath URLByAppendingPathComponent:url.lastPathComponent] error:&error]) {
       return [FBFuture futureWithError:error];
     }
   }
@@ -520,7 +520,7 @@ static NSString *const XctestRunExtension = @"xctestrun";
   if (!basePath) {
     return nil;
   }
-  FBXCTestBundleStorage *xctest = [[FBXCTestBundleStorage alloc] initWithTarget:target basePath:basePath queue:queue logger:logger relocateLibraries:NO];
+  FBXCTestBundleStorage *xctest = [[FBXCTestBundleStorage alloc] initWithTarget:target basePath:basePath queue:queue logger:logger relocateLibraries:YES];
 
   basePath = [self prepareStoragePathWithName:@"idb-applications" target:target error:error];
   if (!basePath) {
