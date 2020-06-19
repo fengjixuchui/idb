@@ -26,7 +26,6 @@ from idb.common.types import (
 )
 from idb.grpc.client import IdbClient
 from idb.grpc.companion import merge_connected_targets
-from idb.grpc.destination import destination_to_grpc
 from idb.grpc.idb_pb2 import ConnectRequest
 from idb.utils.contextlib import asynccontextmanager
 
@@ -43,30 +42,29 @@ class IdbManagementClient(IdbManagementClientBase):
         self.logger: logging.Logger = (
             logger if logger else logging.getLogger("idb_grpc_client")
         )
-        self.companion_path = companion_path
-        self._prune_dead_companion = prune_dead_companion
         self.direct_companion_manager = DirectCompanionManager(logger=self.logger)
         self.local_targets_manager = LocalTargetsManager(logger=self.logger)
+        self._companion_spawner: Optional[CompanionSpawner] = (
+            CompanionSpawner(companion_path=companion_path, logger=self.logger)
+            if companion_path is not None
+            else None
+        )
+        self._prune_dead_companion = prune_dead_companion
 
     async def _spawn_notifier(self) -> None:
-        companion_path = self.companion_path
-        if companion_path:
-            companion_spawner = CompanionSpawner(
-                companion_path=companion_path, logger=self.logger
-            )
-            await companion_spawner.spawn_notifier()
+        companion_spawner = self._companion_spawner
+        if companion_spawner is None:
+            return
+        await companion_spawner.spawn_notifier()
 
     async def _spawn_companion(self, target_udid: str) -> Optional[CompanionInfo]:
-        companion_path = self.companion_path
-        if companion_path is None:
+        companion_spawner = self._companion_spawner
+        if companion_spawner is None:
             return None
         local_target_available = await self.local_targets_manager.is_local_target_available(
             target_udid=target_udid
         )
         if local_target_available or target_udid == "mac":
-            companion_spawner = CompanionSpawner(
-                companion_path=companion_path, logger=self.logger
-            )
             self.logger.info(f"will attempt to spawn a companion for {target_udid}")
             port = await companion_spawner.spawn_companion(target_udid=target_udid)
             if port:
@@ -163,11 +161,7 @@ class IdbManagementClient(IdbManagementClientBase):
             ) as client:
                 with tempfile.NamedTemporaryFile(mode="w+b") as f:
                     response = await client.stub.connect(
-                        ConnectRequest(
-                            destination=destination_to_grpc(destination),
-                            metadata=metadata,
-                            local_file_path=f.name,
-                        )
+                        ConnectRequest(metadata=metadata, local_file_path=f.name)
                     )
             companion = CompanionInfo(
                 udid=response.companion.udid,

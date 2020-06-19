@@ -30,7 +30,6 @@ service CompanionService {
   rpc instruments_run (stream InstrumentsRunRequest) returns (stream InstrumentsRunResponse) {}
   rpc launch (stream LaunchRequest) returns (stream LaunchResponse) {}
   rpc list_apps (ListAppsRequest) returns (ListAppsResponse) {}
-  rpc list_targets (ListTargetsRequest) returns (ListTargetsResponse) {}
   rpc log (LogRequest) returns (stream LogResponse) {}
   rpc ls (LsRequest) returns (LsResponse) {}
   rpc mkdir (MkdirRequest) returns (MkdirResponse) {}
@@ -332,6 +331,7 @@ message XctestRunRequest {
   uint64 timeout = 7;
   bool report_activities = 8;
   bool collect_coverage = 9;
+  bool report_attachments = 10;
 }
 
 message XctestRunResponse {
@@ -432,30 +432,21 @@ message LsResponse {
   repeated FileInfo files = 1;
 }
 
-message ConnectionAddress {
-  string host = 1;
-  uint64 port = 2;
-  uint64 grpc_port = 3;
+message ConnectRequest {
+  map<string, string> metadata = 1;
+  // ConnectionDestination destination = 2; deprecated
+  string local_file_path = 4;
 }
 
-message ConnectionDestination {
-  oneof destination {
-    ConnectionAddress address = 1;
-    string target_udid = 2;
-  }
+message ConnectResponse {
+   CompanionInfo companion = 1;
 }
 
 message DisconnectRequest {
-  ConnectionDestination destination = 1;
+  // ConnectionDestination destination = 1; deprecated
 }
 
 message DisconnectResponse {
-}
-
-message ConnectRequest {
-  map<string, string> metadata = 1;
-  ConnectionDestination destination = 2;
-  string local_file_path = 4;
 }
 
 message CompanionInfo {
@@ -482,17 +473,6 @@ message TargetDescription {
   string os_version = 6;
   string architecture = 7;
   // CompanionInfo companion_info = 8; deprecated
-}
-
-message ConnectResponse {
-   CompanionInfo companion = 1;
-}
-
-message ListTargetsRequest {
-}
-
-message ListTargetsResponse {
-  repeated TargetDescription targets = 1;
 }
 
 message BootRequest{

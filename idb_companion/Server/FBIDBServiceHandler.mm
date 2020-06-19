@@ -853,7 +853,7 @@ Status FBIDBServiceHandler::xctest_run(ServerContext *context, const idb::Xctest
   }
   // Once the reporter is created, only it will perform writing to the writer.
   NSError *error = nil;
-  FBIDBXCTestReporter *reporter = [[FBIDBXCTestReporter alloc] initWithResponseWriter:response queue:_target.workQueue logger:_target.logger];
+  FBIDBXCTestReporter *reporter = [[FBIDBXCTestReporter alloc] initWithResponseWriter:response reportAttachments:request->report_attachments() queue:_target.workQueue logger:_target.logger];
   FBIDBTestOperation *operation = [[_commandExecutor xctest_run:xctestRunRequest reporter:reporter logger:[FBControlCoreLogger loggerToConsumer:reporter]] block:&error];
   reporter.resultBundlePath = operation.resultBundlePath;
   reporter.coveragePath = operation.coveragePath;
@@ -1111,11 +1111,5 @@ Status FBIDBServiceHandler::connect(grpc::ServerContext *context, const idb::Con
   response->mutable_companion()->set_is_local(isLocal);
   response->mutable_companion()->set_udid(_target.udid.UTF8String);
   response->mutable_companion()->set_host(NSProcessInfo.processInfo.hostName.UTF8String);
-  return Status::OK;
-}}
-
-Status FBIDBServiceHandler::list_targets(grpc::ServerContext *context, const idb::ListTargetsRequest *request, idb::ListTargetsResponse *response)
-{@autoreleasepool{
-  response->add_targets()->MergeFrom(description_of_target(_target));
   return Status::OK;
 }}
