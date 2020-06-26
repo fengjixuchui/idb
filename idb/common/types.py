@@ -40,6 +40,7 @@ class Permission(Enum):
     CONTACTS = 2
     URL = 3
     LOCATION = 4
+    NOTIFICATION = 5
 
 
 class TargetType(Enum):
@@ -48,9 +49,17 @@ class TargetType(Enum):
 
 
 @dataclass(frozen=True)
-class Address:
+class TCPAddress:
     host: str
     port: int
+
+
+@dataclass(frozen=True)
+class DomainSocketAddress:
+    path: str
+
+
+Address = Union[TCPAddress, DomainSocketAddress]
 
 
 class AppProcessState(Enum):
@@ -91,17 +100,8 @@ ConnectionDestination = Union[str, Address]
 @dataclass(frozen=True)
 class CompanionInfo:
     udid: str
-    host: str
-    port: int
     is_local: bool
-
-    def __eq__(self, other) -> bool:  # pyre-ignore
-        return (
-            self.udid == other.udid
-            and self.host == other.host
-            and self.port == other.port
-            and self.is_local == other.is_local
-        )
+    address: Address
 
 
 @dataclass(frozen=True)

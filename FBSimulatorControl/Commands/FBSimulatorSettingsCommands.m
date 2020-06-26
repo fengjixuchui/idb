@@ -39,6 +39,7 @@ FBiOSTargetFutureType const FBiOSTargetFutureTypeApproval = @"approve";
   }
 
   _simulator = simulator;
+
   return self;
 }
 
@@ -53,13 +54,6 @@ FBiOSTargetFutureType const FBiOSTargetFutureTypeApproval = @"approve";
     overrideLocalization:localizationOverride];
 }
 
-- (FBFuture<NSNull *> *)authorizeLocationSettings:(NSArray<NSString *> *)bundleIDs
-{
-  return [[FBLocationServicesModificationStrategy
-    strategyWithSimulator:self.simulator]
-    approveLocationServicesForBundleIDs:bundleIDs];
-}
-
 - (FBFuture<NSNull *> *)overrideWatchDogTimerForApplications:(NSArray<NSString *> *)bundleIDs withTimeout:(NSTimeInterval)timeout
 {
   return [[FBWatchdogOverrideModificationStrategy
@@ -69,8 +63,18 @@ FBiOSTargetFutureType const FBiOSTargetFutureTypeApproval = @"approve";
 
 - (FBFuture<NSNull *> *)grantAccess:(NSSet<NSString *> *)bundleIDs toServices:(NSSet<FBSettingsApprovalService> *)services
 {
-  // We need at least one approval in the array.
-  NSParameterAssert(services.count >= 1);
+  // We need at least one approval in the input
+  if (services.count == 0) {
+    return [[FBSimulatorError
+      describeFormat:@"Cannot approve any services for %@ since no services were provided", bundleIDs]
+      failFuture];
+  }
+  // We also need at least one bundle id in the input.
+  if (services.count == 0) {
+    return [[FBSimulatorError
+      describeFormat:@"Cannot approve %@ since no bundle ids were provided", services]
+      failFuture];
+  }
 
   // Composing different futures due to differences in how these operate.
   NSMutableArray<FBFuture<NSNull *> *> *futures = [NSMutableArray array];
@@ -80,11 +84,15 @@ FBiOSTargetFutureType const FBiOSTargetFutureTypeApproval = @"approve";
   if ([services containsObject:FBSettingsApprovalServiceLocation]) {
     [futures addObject:[self authorizeLocationSettings:bundleIDs.allObjects]];
   }
-  // Don't wrap if there's only one future.
+  // Nothing to do with zero futures.
   if (futures.count == 0) {
+    return FBFuture.empty;
+  }
+  // Don't wrap if there's only one future.
+  if (futures.count == 1) {
     return futures.firstObject;
   }
-  return [FBFuture futureWithFutures:futures];
+  return [[FBFuture futureWithFutures:futures] mapReplace:NSNull.null];
 }
 
 - (FBFuture<NSNull *> *)grantAccess:(NSSet<NSString *> *)bundleIDs toDeeplink:(NSString *)scheme
@@ -183,6 +191,13 @@ FBiOSTargetFutureType const FBiOSTargetFutureTypeApproval = @"approve";
 
 #pragma mark Private
 
+- (FBFuture<NSNull *> *)authorizeLocationSettings:(NSArray<NSString *> *)bundleIDs
+{
+  return [[FBLocationServicesModificationStrategy
+    strategyWithSimulator:self.simulator]
+    approveLocationServicesForBundleIDs:bundleIDs];
+}
+
 - (FBFuture<NSNull *> *)modifyTCCDatabaseWithBundleIDs:(NSSet<NSString *> *)bundleIDs toServices:(NSSet<FBSettingsApprovalService> *)services
 {
   NSString *databasePath = [self.simulator.dataDirectory stringByAppendingPathComponent:@"Library/TCC/TCC.db"];
@@ -206,8 +221,6 @@ FBiOSTargetFutureType const FBiOSTargetFutureTypeApproval = @"approve";
     }]
     mapReplace:NSNull.null];
 }
-
-#pragma mark Private
 
 + (NSDictionary<FBSettingsApprovalService, NSString *> *)tccDatabaseMapping
 {

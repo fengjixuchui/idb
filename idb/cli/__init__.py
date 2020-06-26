@@ -8,7 +8,7 @@ import logging
 import os
 from abc import ABCMeta, abstractmethod
 from argparse import ArgumentParser, Namespace
-from typing import AsyncContextManager, Optional, Tuple
+from typing import AsyncContextManager, Optional
 
 from idb.common import plugin
 from idb.common.command import Command
@@ -16,18 +16,23 @@ from idb.common.companion import Companion
 from idb.common.logging import log_call
 from idb.common.types import (
     Address,
+    DomainSocketAddress,
     IdbClient,
     IdbConnectionException,
     IdbManagementClient,
+    TCPAddress,
 )
 from idb.grpc.client import IdbClient as IdbClientGrpc
 from idb.grpc.management import IdbManagementClient as IdbManagementClientGrpc
 from idb.utils.contextlib import asynccontextmanager
 
 
-def _parse_companion_info(value: str) -> Tuple[str, int]:
-    (host, port) = value.rsplit(":", 1)
-    return (host, int(port))
+def _parse_address(value: str) -> Address:
+    values = value.rsplit(":", 1)
+    if len(values) == 1:
+        return DomainSocketAddress(path=value)
+    (host, port) = values
+    return TCPAddress(host=host, port=int(port))
 
 
 def _get_management_client(
@@ -46,9 +51,10 @@ async def _get_client(
 ) -> AsyncContextManager[IdbClientGrpc]:
     companion = vars(args).get("companion")
     if companion is not None:
-        (host, port) = _parse_companion_info(companion)
         async with IdbClientGrpc.build(
-            host=host, port=port, is_local=args.companion_local, logger=logger
+            address=_parse_address(companion),
+            is_local=args.companion_local,
+            logger=logger,
         ) as client:
             yield client
     else:

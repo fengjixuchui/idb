@@ -4,14 +4,9 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-import dataclasses
-
 from idb.common.format import (
     json_data_companions,
-    json_format_installed_app_info,
-    json_format_installed_test_info,
     json_format_target_info,
-    json_format_test_info,
     json_to_companion_info,
     target_description_from_json,
 )
@@ -21,6 +16,7 @@ from idb.common.types import (
     InstalledAppInfo,
     InstalledTestInfo,
     TargetDescription,
+    TCPAddress,
     TestActivity,
     TestRunFailureInfo,
     TestRunInfo,
@@ -62,7 +58,7 @@ INSTALLED_APP_INFO_FIXTURE = InstalledAppInfo(
     debuggable=True,
 )
 COMPANION_INFO_FIXTURE = CompanionInfo(
-    udid="MyUdid", host="ThisMac", port=1234, is_local=False
+    udid="MyUdid", address=TCPAddress(host="ThisMac", port=1234), is_local=False
 )
 TARGET_DESCRIPTION_FIXTURE = TargetDescription(
     udid="MyUdid",

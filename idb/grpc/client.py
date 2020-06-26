@@ -63,6 +63,7 @@ from idb.common.types import (
     LoggingMetadata,
     Permission,
     TargetDescription,
+    TCPAddress,
     TestRunInfo,
 )
 from idb.grpc.crash import (
@@ -142,6 +143,7 @@ APPROVE_MAP: Dict[Permission, ApproveRequest] = {
     Permission.CONTACTS: ApproveRequest.CONTACTS,
     Permission.URL: ApproveRequest.URL,
     Permission.LOCATION: ApproveRequest.LOCATION,
+    Permission.NOTIFICATION: ApproveRequest.NOTIFICATION,
 }
 
 
@@ -197,13 +199,17 @@ class IdbClient(IdbClientBase):
     @classmethod
     @asynccontextmanager
     async def build(
-        cls, host: str, port: int, is_local: bool, logger: logging.Logger
+        cls, address: Address, is_local: bool, logger: logging.Logger
     ) -> AsyncContextManager["IdbClient"]:
-        channel = Channel(host=host, port=port, loop=asyncio.get_event_loop())
+        channel = (
+            Channel(host=address.host, port=address.port, loop=asyncio.get_event_loop())
+            if isinstance(address, TCPAddress)
+            else Channel(path=address.path, loop=asyncio.get_event_loop())
+        )
         try:
             yield IdbClient(
                 stub=CompanionServiceStub(channel=channel),
-                address=Address(host=host, port=port),
+                address=address,
                 is_local=is_local,
                 logger=logger,
             )
@@ -364,10 +370,7 @@ class IdbClient(IdbClientBase):
         return target_to_py(
             target=target,
             companion=CompanionInfo(
-                host=self.address.host,
-                port=self.address.port,
-                udid=target.udid,
-                is_local=self.is_local,
+                address=self.address, udid=target.udid, is_local=self.is_local
             ),
         )
 
