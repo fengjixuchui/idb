@@ -20,7 +20,6 @@
 #import "FBDeviceDebuggerCommands.h"
 #import "FBDeviceLogCommands.h"
 #import "FBDeviceScreenshotCommands.h"
-#import "FBDeviceSet+Private.h"
 #import "FBDeviceVideoRecordingCommands.h"
 #import "FBDeviceXCTestCommands.h"
 
@@ -239,6 +238,10 @@
 
 - (id)forwardingTargetForSelector:(SEL)selector
 {
+  // Try the underling FBAMDevice instance>
+  if ([self.amDevice respondsToSelector:selector]) {
+    return self.amDevice;
+  }
   // Try the forwarder.
   id command = [self.forwarder forwardingTargetForSelector:selector];
   if (command) {
