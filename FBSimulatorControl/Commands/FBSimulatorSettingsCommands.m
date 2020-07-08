@@ -17,6 +17,7 @@
 #import "FBDefaultsModificationStrategy.h"
 
 FBiOSTargetFutureType const FBiOSTargetFutureTypeApproval = @"approve";
+static NSString *const SpringBoardServiceName = @"com.apple.SpringBoard";
 
 @interface FBSimulatorSettingsCommands ()
 
@@ -235,7 +236,7 @@ FBiOSTargetFutureType const FBiOSTargetFutureTypeApproval = @"approve";
     properties[@"$objects"][3][@"allowsNotifications"] = @(YES);
 
     NSError *writeError = nil;
-    NSData *resultData = [NSPropertyListSerialization dataWithPropertyList:properties format:kCFPropertyListBinaryFormat_v1_0 options:0 error:&writeError];
+    NSData *resultData = [NSPropertyListSerialization dataWithPropertyList:properties format:NSPropertyListBinaryFormat_v1_0 options:0 error:&writeError];
     if (writeError != nil) {
       return [FBSimulatorError failFutureWithError:writeError];
     }
@@ -249,7 +250,11 @@ FBiOSTargetFutureType const FBiOSTargetFutureTypeApproval = @"approve";
       failFuture];
   }
 
-  return FBFuture.empty;
+  if (self.simulator.state == FBiOSTargetStateBooted) {
+    return [[self.simulator stopServiceWithName:SpringBoardServiceName] mapReplace:NSNull.null];
+  } else {
+    return FBFuture.empty;
+  }
 }
 
 - (FBFuture<NSNull *> *)modifyTCCDatabaseWithBundleIDs:(NSSet<NSString *> *)bundleIDs toServices:(NSSet<FBSettingsApprovalService> *)services
