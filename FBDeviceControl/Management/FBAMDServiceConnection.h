@@ -11,14 +11,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-@class FBServiceConnectionClient;
-
 @protocol FBControlCoreLogger;
-
-/**
- The Connection Reference as is typically passed around between functions.
- */
-typedef CFTypeRef AMDServiceConnectionRef;
+@class FBServiceConnectionClient;
 
 /**
  Wraps the AMDServiceConnection.
@@ -48,6 +42,15 @@ typedef CFTypeRef AMDServiceConnectionRef;
  @return YES if the bytes were sent, NO otherwise.
  */
 - (BOOL)send:(NSData *)data error:(NSError **)error;
+
+/**
+ Synchronously send bytes on the connection, prefixed with a length packet.
+
+ @param data the data to send>
+ @param error an error out for any error that occurs.
+ @return YES if the bytes were sent, NO otherwise.
+ */
+- (BOOL)sendWithLengthHeader:(NSData *)data error:(NSError **)error;
 
 /**
  Synchronously receive bytes from the connection.
@@ -93,6 +96,15 @@ typedef CFTypeRef AMDServiceConnectionRef;
  @return the read plist.
  */
 - (id)receiveMessageWithError:(NSError **)error;
+
+/**
+ Send then receive a plist.
+
+ @param message the message to send.
+ @param error an error out for any error that occurs.
+ @return the message received, if successful.
+ */
+- (id)sendAndReceiveMessage:(id)message error:(NSError **)error;
 
 #pragma mark Streams
 

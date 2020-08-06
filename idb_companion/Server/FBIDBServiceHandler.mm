@@ -1050,6 +1050,27 @@ Status FBIDBServiceHandler::describe(ServerContext *context, const idb::TargetDe
   description->set_target_type(FBiOSTargetTypeStringsFromTargetType(_target.targetType).firstObject.lowercaseString.UTF8String);
   description->set_os_version(_target.osVersion.name.UTF8String);
   description->set_architecture(_target.architecture.UTF8String);
+  NSDictionary<NSString *, id> *extendedInformation = _target.extendedInformation;
+  NSError *error = nil;
+  NSData *data = [NSJSONSerialization dataWithJSONObject:extendedInformation options:0 error:&error];
+  if (!data) {
+    return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
+  }
+  description->set_extended(data.bytes, data.length);
+
+  // Only fetch diagnostic information when requested.
+  if (!request->fetch_diagnostics()) {
+    return Status::OK;
+  }
+  NSDictionary<NSString *, id> *diagnosticInformation = [[_commandExecutor diagnostic_information] block:&error];
+  if (!diagnosticInformation) {
+    return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
+  }
+  data = [NSJSONSerialization dataWithJSONObject:diagnosticInformation options:0 error:&error];
+  if (!data) {
+    return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
+  }
+  description->set_diagnostics(data.bytes, data.length);
   return Status::OK;
 }}
 

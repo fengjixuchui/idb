@@ -39,30 +39,6 @@ NS_ASSUME_NONNULL_BEGIN
  */
 @interface FBAMDevice : NSObject <FBiOSTargetInfo, FBDeviceCommands>
 
-#pragma mark Initializers
-
-/**
- Returns an Array of all the Available Devices.
- */
-+ (NSArray<FBAMDevice *> *)allDevices;
-
-#pragma mark Properties
-
-/**
- All of the Device Values available.
- */
-@property (nonatomic, copy, readonly) NSDictionary<NSString *, id> *allValues;
-
-/**
- The Device's 'Product Version'.
- */
-@property (nonatomic, nullable, copy, readonly) NSString *productVersion;
-
-/**
- The Device's 'Build Version'.
- */
-@property (nonatomic, nullable, copy, readonly) NSString *buildVersion;
-
 @end
 
 NS_ASSUME_NONNULL_END

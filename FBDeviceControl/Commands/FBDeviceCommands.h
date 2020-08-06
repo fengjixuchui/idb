@@ -11,14 +11,48 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class FBAFCConnection;
 @class FBAMDevice;
 @class FBAMDServiceConnection;
-@class FBAFCConnection;
+@class FBDeveloperDiskImage;
+@class FBDeviceLinkClient;
+
+/**
+ Defines properties that are required on classes related to the implementation of FBDevice.
+ */
+@protocol FBDevice <NSObject>
+
+/**
+ The AMDevice Calls to use.
+ */
+@property (nonatomic, assign, readonly) AMDCalls calls;
+
+/**
+ The Device's Logger.
+ */
+@property (nonatomic, strong, readonly) id<FBControlCoreLogger> logger;
+
+/**
+ The Device's 'Product Version'.
+ */
+@property (nonatomic, nullable, copy, readonly) NSString *productVersion;
+
+/**
+ The Device's 'Build Version'.
+ */
+@property (nonatomic, nullable, copy, readonly) NSString *buildVersion;
+
+/**
+ All of the Device Values available.
+ */
+@property (nonatomic, copy, readonly) NSDictionary<NSString *, id> *allValues;
+
+@end
 
 /**
  Defines Device-Specific commands, off which others are based.
  */
-@protocol FBDeviceCommands <NSObject>
+@protocol FBDeviceCommands <FBDevice>
 
 /**
  Obtain the connection for a device.
@@ -29,11 +63,6 @@ NS_ASSUME_NONNULL_BEGIN
 - (FBFutureContext<FBAMDevice *> *)connectToDeviceWithPurpose:(NSString *)format, ... NS_FORMAT_FUNCTION(1,2);
 
 /**
- Starts test manager daemon service
- */
-- (FBFutureContext<FBAMDServiceConnection *> *)startTestManagerService;
-
-/**
  Starts a Service on the AMDevice.
 
  @param service the service name
@@ -42,11 +71,20 @@ NS_ASSUME_NONNULL_BEGIN
 - (FBFutureContext<FBAMDServiceConnection *> *)startService:(NSString *)service;
 
 /**
- Starts an AFC Session on the Device.
+ Starts a Service, wrapping it in a "Device Link" Plist client.
 
+ @param service the service name.
+ @return a Future context wrapping the FBDeviceLinkClient.
+ */
+- (FBFutureContext<FBDeviceLinkClient *> *)startDeviceLinkService:(NSString *)service;
+
+/**
+ Starts a Service, wrapping it in an "AFC" Client.
+
+ @param service the service name.
  @return a Future wrapping the AFC connection.
  */
-- (FBFutureContext<FBAFCConnection *> *)startAFCService;
+- (FBFutureContext<FBAFCConnection *> *)startAFCService:(NSString *)service;
 
 /**
  Starts house arrest for a given bundle id.
@@ -56,6 +94,13 @@ NS_ASSUME_NONNULL_BEGIN
  @return a Future context wrapping the AFC Connection.
  */
 - (FBFutureContext<FBAFCConnection *> *)houseArrestAFCConnectionForBundleID:(NSString *)bundleID afcCalls:(AFCCalls)afcCalls;
+
+/**
+ Mounts the developer disk image.
+
+ @return a Future wrapping the mounted image.
+ */
+- (FBFuture<FBDeveloperDiskImage *> *)mountDeveloperDiskImage;
 
 @end
 

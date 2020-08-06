@@ -43,9 +43,15 @@ Usage: \n \
     --debug-port PORT          Port to connect debugger on (default: 10881).\n\
     --log-file-path PATH       Path to write a log file to e.g ./output.log (default: logs to stdErr).\n\
     --device-set-path PATH     Path to a custom Simulator device set.\n\
-    --only simulator|device    If provided will query only against simulators or devices\n\
+    --only FILTER_OPTION       If provided, will limit interaction to a subset of all available targets\n\
     --headless VALUE           If VALUE is a true value, the Simulator boot's lifecycle will be tied to the lifecycle of this invocation.\n\
-    --terminate-offline VALUE  Terminate if the target goes offline, otherwise the companion will stay alive.\n";
+    --terminate-offline VALUE  Terminate if the target goes offline, otherwise the companion will stay alive.\n\
+\n\
+ Filter Options:\n\
+    simulator                  Limit interactions to Simulators only.\n\
+    device                     Limit interactions to Devices only.\n\
+    ecid:ECID                  Limit interactions to a specific Device ECID\n\
+";
 
 static BOOL shouldPrintUsage(void)
 {
@@ -87,33 +93,21 @@ static FBFuture<FBSimulatorSet *> *SimulatorSet(NSUserDefaults *userDefaults, id
   return SimulatorSetWithPath(deviceSetPath, logger, reporter);
 }
 
-static FBFuture<FBDeviceSet *> *DeviceSet(id<FBControlCoreLogger> logger)
+static FBFuture<FBDeviceSet *> *DeviceSet(id<FBControlCoreLogger> logger, NSString *ecidFilter)
 {
-  // Give a more meaningful message if we can't load the frameworks.
-  NSError *error = nil;
-  if(![FBDeviceControlFrameworkLoader.new loadPrivateFrameworks:logger error:&error]) {
-    return [FBFuture futureWithError:error];
-  }
-  FBDeviceSet *deviceSet = [FBDeviceSet defaultSetWithLogger:logger error:&error delegate:nil];
-  if (!deviceSet) {
-    return [FBFuture futureWithError:error];
-  }
-  return [FBFuture futureWithResult:deviceSet];
-}
-
-static FBFuture<FBAMRestorableDeviceManager *> *RestorableDeviceSet(id<FBControlCoreLogger> logger)
-{
-  // Give a more meaningful message if we can't load the frameworks.
-  NSError *error = nil;
-  if(![FBDeviceControlFrameworkLoader.new loadPrivateFrameworks:logger error:&error]) {
-    return [FBFuture futureWithError:error];
-  }
-  logger = [logger withName:@"restorable_device_manager"];
-  FBDeviceManager *manager = [[FBAMRestorableDeviceManager alloc] initWithLogger:logger];
-  if (![manager startListeningWithError:&error]) {
-    return [FBFuture futureWithError:error];
-  }
-  return [FBFuture futureWithResult:manager];
+  return [[FBFuture
+    onQueue:dispatch_get_main_queue() resolveValue:^ FBDeviceSet * (NSError **error) {
+      // Give a more meaningful message if we can't load the frameworks.
+      if(![FBDeviceControlFrameworkLoader.new loadPrivateFrameworks:logger error:error]) {
+        return nil;
+      }
+      FBDeviceSet *deviceSet = [FBDeviceSet setWithLogger:logger delegate:nil ecidFilter:ecidFilter error:error];
+      if (!deviceSet) {
+        return nil;
+      }
+      return deviceSet;
+    }]
+    delay:0.2]; // This is needed to give the Restorable Devices time to populate.
 }
 
 static FBFuture<NSArray<id<FBiOSTargetSet>> *> *DefaultTargetSets(NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
@@ -126,10 +120,12 @@ static FBFuture<NSArray<id<FBiOSTargetSet>> *> *DefaultTargetSets(NSUserDefaults
     }
     if ([only.lowercaseString containsString:@"device"]) {
       [logger log:@"'--only' set for Devices"];
-      return [FBFuture futureWithFutures:@[
-        DeviceSet(logger),
-        RestorableDeviceSet(logger),
-      ]];
+      return [FBFuture futureWithFutures:@[DeviceSet(logger, nil)]];
+    }
+    if ([only.lowercaseString hasPrefix:@"ecid:"]) {
+      NSString *ecid = [only.lowercaseString stringByReplacingOccurrencesOfString:@"ecid:" withString:@""];
+      [logger logFormat:@"ECID filter of %@", ecid];
+      return [FBFuture futureWithFutures:@[DeviceSet(logger, ecid)]];
     }
     return [[FBIDBError
       describeFormat:@"%@ is not a valid argument for '--only'", only]
@@ -138,8 +134,7 @@ static FBFuture<NSArray<id<FBiOSTargetSet>> *> *DefaultTargetSets(NSUserDefaults
   [logger log:@"Providing targets across Simulator and Device sets."];
   return [FBFuture futureWithFutures:@[
     SimulatorSet(userDefaults, logger, reporter),
-    DeviceSet(logger),
-    RestorableDeviceSet(logger),
+    DeviceSet(logger, nil),
   ]];
 }
 
@@ -230,9 +225,15 @@ static FBFuture<NSNull *> *ShutdownFuture(NSString *udid, NSUserDefaults *userDe
 
 static FBFuture<NSNull *> *EraseFuture(NSString *udid, NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
 {
-  return [SimulatorFuture(udid, userDefaults, logger, reporter)
-    onQueue:dispatch_get_main_queue() fmap:^(FBSimulator *simulator) {
-      return [simulator erase];
+  return [TargetForUDID(udid, userDefaults, NO, logger, reporter)
+    onQueue:dispatch_get_main_queue() fmap:^ FBFuture<NSNull *> * (id<FBiOSTarget> target) {
+      id<FBEraseCommands> commands = (id<FBEraseCommands>) target;
+      if (![commands conformsToProtocol:@protocol(FBEraseCommands)]) {
+        return [[FBIDBError
+          describeFormat:@"Cannot erase %@, does not support erasing", target]
+          failFuture];
+      }
+      return [commands erase];
     }];
 }
 
@@ -258,11 +259,14 @@ static FBFuture<NSNull *> *ListFuture(NSUserDefaults *userDefaults, id<FBControl
 {
   return [DefaultTargetSets(userDefaults, logger, reporter)
     onQueue:dispatch_get_main_queue() map:^ NSNull * (NSArray<id<FBiOSTargetSet>> *targetSets) {
+      NSUInteger reportedCount = 0;
       for (id<FBiOSTargetSet> targetSet in targetSets) {
         for (id<FBiOSTargetInfo> targetInfo in targetSet.allTargetInfos) {
           WriteTargetToStdOut(targetInfo);
+          reportedCount++;
         }
       }
+      [logger logFormat:@"Reported %lu targets to stdout", reportedCount];
       return NSNull.null;
     }];
 }

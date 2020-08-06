@@ -128,7 +128,7 @@ extern FBiOSTargetStateString const FBiOSTargetStateStringUnknown;
 /**
  A protocol that defines an interactible and informational target.
  */
-@protocol FBiOSTarget <NSObject, FBiOSTargetInfo,  FBJSONSerializable, FBDebugDescribeable, FBApplicationCommands, FBBitmapStreamingCommands, FBCrashLogCommands, FBLogCommands, FBScreenshotCommands, FBVideoRecordingCommands, FBXCTestCommands, FBInstrumentsCommands, FBDebuggerCommands>
+@protocol FBiOSTarget <NSObject, FBiOSTargetInfo, FBJSONSerializable, FBDebugDescribeable, FBApplicationCommands, FBBitmapStreamingCommands, FBCrashLogCommands, FBLogCommands, FBScreenshotCommands, FBVideoRecordingCommands, FBXCTestCommands, FBInstrumentsCommands, FBDebuggerCommands>
 
 /**
  The Target's Logger.
@@ -216,6 +216,22 @@ extern FBiOSTargetType FBiOSTargetTypeFromTargetTypeStrings(NSArray<NSString *> 
  A Default Comparison Function that can be called for different implementations of FBiOSTarget.
  */
 extern NSComparisonResult FBiOSTargetComparison(id<FBiOSTarget> left, id<FBiOSTarget> right);
+
+/**
+ The default screenshot path for a target.
+
+ @param storageDirectory the storage directory of the target to use.
+ @return a file path.
+ */
+extern NSString *FBiOSTargetDefaultScreenshotPath(NSString *storageDirectory);
+
+/**
+ The default video path for a target.
+
+ @param storageDirectory the storage directory of the target to use.
+ @return a file path.
+ */
+extern NSString *FBiOSTargetDefaultVideoPath(NSString *storageDirectory);
 
 #if defined __cplusplus
 };

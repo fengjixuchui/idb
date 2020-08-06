@@ -16,36 +16,39 @@
 #import "FBAMDeviceManager.h"
 #import "FBAMDeviceServiceManager.h"
 #import "FBAMDServiceConnection.h"
+#import "FBAMRestorableDevice.h"
+#import "FBDeveloperDiskImage.h"
 #import "FBDeviceControlError.h"
 #import "FBDeviceControlFrameworkLoader.h"
+#import "FBDeviceLinkClient.h"
+
+static void MountCallback(NSDictionary<NSString *, id> *callbackDictionary, FBAMDevice *device)
+{
+  [device.logger logFormat:@"Mount Progress: %@", [FBCollectionInformation oneLineDescriptionFromDictionary:callbackDictionary]];
+}
 
 #pragma mark - FBAMDevice Implementation
 
 @implementation FBAMDevice
 
 @synthesize amDevice = _amDevice;
-@synthesize udid = _udid;
+@synthesize calls = _calls;
 @synthesize contextPoolTimeout = _contextPoolTimeout;
+@synthesize logger = _logger;
 
 #pragma mark Initializers
 
-+ (NSArray<FBAMDevice *> *)allDevices
-{
-  return FBAMDeviceManager.sharedManager.currentDeviceList;
-}
-
-- (instancetype)initWithUDID:(NSString *)udid allValues:(NSDictionary<NSString *, id> *)allValues calls:(AMDCalls)calls connectionReuseTimeout:(nullable NSNumber *)connectionReuseTimeout serviceReuseTimeout:(nullable NSNumber *)serviceReuseTimeout workQueue:(dispatch_queue_t)workQueue logger:(id<FBControlCoreLogger>)logger
+- (instancetype)initWithAllValues:(NSDictionary<NSString *, id> *)allValues calls:(AMDCalls)calls connectionReuseTimeout:(nullable NSNumber *)connectionReuseTimeout serviceReuseTimeout:(nullable NSNumber *)serviceReuseTimeout workQueue:(dispatch_queue_t)workQueue logger:(id<FBControlCoreLogger>)logger
 {
   self = [super init];
   if (!self) {
     return nil;
   }
 
-  _udid = udid;
   _allValues = allValues;
   _calls = calls;
   _workQueue = workQueue;
-  _logger = [logger withName:udid];
+  _logger = [logger withName:self.udid];
   _connectionContextManager = [FBFutureContextManager managerWithQueue:workQueue delegate:self logger:logger];
   _contextPoolTimeout = connectionReuseTimeout;
   _serviceManager = [FBAMDeviceServiceManager managerWithAMDevice:self serviceTimeout:serviceReuseTimeout];
@@ -74,53 +77,49 @@
 
 - (NSDictionary<NSString *, id> *)extendedInformation
 {
-  NSDictionary<NSString *, id> *source = self.allValues;
-  NSMutableDictionary<NSString *, id> *destination = NSMutableDictionary.dictionary;
-  for (NSString *key in source.allKeys) {
-    id value = source[key];
-    if ([value isKindOfClass:NSString.class]) {
-      destination[key] = value;
-    }
-    if ([value isKindOfClass:NSNumber.class]) {
-      destination[key] = value;
-    }
-  }
-  return @{@"device": destination};
+  return @{
+    @"device": [FBCollectionOperations recursiveFilteredJSONSerializableRepresentationOfDictionary:self.allValues],
+  };
 }
 
 - (NSString *)uniqueIdentifier
 {
-  return [self.allValues[@"UniqueChipID"] stringValue];
+  return [self.allValues[FBDeviceKeyUniqueChipID] stringValue];
+}
+
+- (NSString *)udid
+{
+  return self.allValues[FBDeviceKeyUniqueDeviceID];
 }
 
 - (NSString *)architecture
 {
-  return self.allValues[@"CPUArchitecture"];
+  return self.allValues[FBDeviceKeyCPUArchitecture];
 }
 
 - (NSString *)buildVersion
 {
-  return self.allValues[@"BuildVersion"];
+  return self.allValues[FBDeviceKeyBuildVersion];
 }
 
 - (NSString *)productVersion
 {
-  return self.allValues[@"ProductVersion"];
+  return self.allValues[FBDeviceKeyProductVersion];
 }
 
 - (NSString *)name
 {
-  return self.allValues[@"DeviceName"];
+  return self.allValues[FBDeviceKeyDeviceName];
 }
 
 - (FBDeviceType *)deviceType
 {
-  return FBiOSTargetConfiguration.productTypeToDevice[self.allValues[@"ProductType"]];
+  return FBiOSTargetConfiguration.productTypeToDevice[self.allValues[FBDeviceKeyProductType]];
 }
 
 - (FBOSVersion *)osVersion
 {
-  NSString *osVersion = [FBAMDevice osVersionForDeviceClass:self.allValues[@"DeviceClass"] productVersion:self.productVersion];
+  NSString *osVersion = [FBAMDevice osVersionForDeviceClass:self.allValues[FBDeviceKeyDeviceClass] productVersion:self.productVersion];
   return FBiOSTargetConfiguration.nameToOSVersion[osVersion] ?: [FBOSVersion genericWithName:osVersion];
 }
 
@@ -187,19 +186,22 @@
     }];
 }
 
-- (FBFutureContext<FBAFCConnection *> *)startAFCService
+- (FBFutureContext<FBDeviceLinkClient *> *)startDeviceLinkService:(NSString *)service
 {
   return [[self
-    startService:@"com.apple.afc"]
-    onQueue:self.workQueue push:^(FBAMDServiceConnection *connection) {
-      return [FBAFCConnection afcFromServiceConnection:connection calls:FBAFCConnection.defaultCalls logger:self.logger queue:self.workQueue];
+    startService:service]
+    onQueue:self.workQueue pend:^(FBAMDServiceConnection *connection) {
+      return [FBDeviceLinkClient deviceLinkClientWithConnection:connection];
     }];
 }
 
-- (FBFutureContext<FBAMDServiceConnection *> *)startTestManagerService
+- (FBFutureContext<FBAFCConnection *> *)startAFCService:(NSString *)service
 {
-  // See XCTDaemonControlMobileDevice in Xcode.
-  return [self startService:@"com.apple.testmanagerd.lockdown"];
+  return [[self
+    startService:service]
+    onQueue:self.workQueue push:^(FBAMDServiceConnection *connection) {
+      return [FBAFCConnection afcFromServiceConnection:connection calls:FBAFCConnection.defaultCalls logger:self.logger queue:self.workQueue];
+    }];
 }
 
 - (FBFutureContext<FBAFCConnection *> *)houseArrestAFCConnectionForBundleID:(NSString *)bundleID afcCalls:(AFCCalls)afcCalls
@@ -210,6 +212,42 @@
       return [[self.serviceManager
         houseArrestAFCConnectionForBundleID:bundleID afcCalls:afcCalls]
         utilizeWithPurpose:self.udid];
+    }];
+}
+
+static const int DiskImageAlreadyMountedCode = -402653066;  // 0xe8000076 in hex
+
+- (FBFuture<FBDeveloperDiskImage *> *)mountDeveloperDiskImage
+{
+  NSError *error = nil;
+  FBDeveloperDiskImage *diskImage = [FBDeveloperDiskImage developerDiskImage:self logger:self.logger error:&error];
+  if (!diskImage) {
+    return [FBFuture futureWithError:error];
+  }
+  return [[self
+    connectToDeviceWithPurpose:@"mount_disk_image"]
+    onQueue:self.workQueue pop:^ FBFuture<NSDictionary<NSString *, NSDictionary<NSString *, id> *> *> * (FBAMDevice *device) {
+      NSDictionary *options = @{
+        @"ImageSignature": diskImage.signature,
+        @"ImageType": @"Developer",
+      };
+      int status = device.calls.MountImage(
+        device.amDevice,
+        (__bridge CFStringRef)(diskImage.diskImagePath),
+        (__bridge CFDictionaryRef)(options),
+        (AMDeviceProgressCallback) MountCallback,
+        (__bridge void *) (device)
+      );
+      if (status == DiskImageAlreadyMountedCode) {
+        [device.logger logFormat:@"There is a disk image already mounted. Assuming that it is correct...."];
+      }
+      else if (status != 0) {
+        NSString *internalMessage = CFBridgingRelease(device.calls.CopyErrorText(status));
+        return [[FBDeviceControlError
+          describeFormat:@"Failed to mount image '%@' with error 0x%x (%@)", diskImage.diskImagePath, status, internalMessage]
+          failFuture];
+      }
+      return [FBFuture futureWithResult:diskImage];
     }];
 }
 

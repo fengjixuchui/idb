@@ -13,11 +13,14 @@
 #import <FBControlCore/FBControlCore.h>
 
 #import "FBAMDevice.h"
+#import "FBAMRestorableDevice.h"
 #import "FBDeviceApplicationCommands.h"
 #import "FBDeviceApplicationDataCommands.h"
 #import "FBDeviceControlError.h"
 #import "FBDeviceCrashLogCommands.h"
 #import "FBDeviceDebuggerCommands.h"
+#import "FBDeviceDiagnosticInformationCommands.h"
+#import "FBDeviceLocationCommands.h"
 #import "FBDeviceLogCommands.h"
 #import "FBDeviceScreenshotCommands.h"
 #import "FBDeviceVideoRecordingCommands.h"
@@ -29,12 +32,28 @@
 
 @implementation FBDevice
 
+@synthesize allValues = _allValues;
+@synthesize amDevice = _amDevice;
+@synthesize architecture = _architecture;
+@synthesize buildVersion = _buildVersion;
+@synthesize calls = _calls;
+@synthesize deviceType = _deviceType;
+@synthesize extendedInformation = _extendedInformation;
 @synthesize logger = _logger;
+@synthesize name = _name;
+@synthesize osVersion = _osVersion;
+@synthesize productVersion = _productVersion;
+@synthesize restorableDevice = _restorableDevice;
+@synthesize state = _state;
+@synthesize targetType = _targetType;
+@synthesize udid = _udid;
+@synthesize uniqueIdentifier = _uniqueIdentifier;
 
 #pragma mark Initializers
 
-- (instancetype)initWithSet:(FBDeviceSet *)set amDevice:(FBAMDevice *)amDevice logger:(id<FBControlCoreLogger>)logger
+- (instancetype)initWithSet:(FBDeviceSet *)set amDevice:(FBAMDevice *)amDevice restorableDevice:(FBAMRestorableDevice *)restorableDevice logger:(id<FBControlCoreLogger>)logger
 {
+  NSAssert(amDevice || restorableDevice, @"An FBAMDevice or FBAMRestorableDevice must be provided");
   self = [super init];
   if (!self) {
     return nil;
@@ -42,7 +61,9 @@
 
   _set = set;
   _amDevice = amDevice;
-  _logger = [logger withName:amDevice.udid];
+  _restorableDevice = restorableDevice;
+  [self cacheValuesFromInfo:(amDevice ?: restorableDevice) overwrite:YES];
+  _logger = [logger withName:self.udid];
   _forwarder = [FBiOSTargetCommandForwarder forwarderWithTarget:self commandClasses:FBDevice.commandResponders statefulCommands:FBDevice.statefulCommands];
 
   return self;
@@ -57,40 +78,19 @@
   ];
 }
 
-- (NSString *)uniqueIdentifier
+- (dispatch_queue_t)workQueue
 {
-  return self.amDevice.uniqueIdentifier;
+  return dispatch_get_main_queue();
 }
 
-- (NSString *)udid
+- (dispatch_queue_t)asyncQueue
 {
-  return self.amDevice.udid;
+  return dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0);
 }
 
-- (NSString *)name
+- (FBiOSTargetDiagnostics *)diagnostics
 {
-  return self.amDevice.name;
-}
-
-- (FBArchitecture)architecture
-{
-  return self.amDevice.architecture;
-}
-
-- (FBiOSTargetState)state
-{
-  return self.amDevice.state;
-}
-
-- (FBiOSTargetType)targetType
-{
-  return self.amDevice.targetType;
-}
-
-- (NSString *)auxillaryDirectory
-{
-  NSString *cwd = NSFileManager.defaultManager.currentDirectoryPath;
-  return [NSFileManager.defaultManager isWritableFileAtPath:cwd] ? cwd : @"/tmp";
+  return [[FBiOSTargetDiagnostics alloc] initWithStorageDirectory:self.auxillaryDirectory];
 }
 
 - (FBProcessInfo *)containerApplication
@@ -103,34 +103,15 @@
   return nil;
 }
 
-- (FBDeviceType *)deviceType
+- (NSString *)auxillaryDirectory
 {
-  return self.amDevice.deviceType;
+  NSString *cwd = NSFileManager.defaultManager.currentDirectoryPath;
+  return [NSFileManager.defaultManager isWritableFileAtPath:cwd] ? cwd : @"/tmp";
 }
 
-- (FBOSVersion *)osVersion
+- (FBiOSTargetScreenInfo *)screenInfo
 {
-  return self.amDevice.osVersion;
-}
-
-- (FBiOSTargetDiagnostics *)diagnostics
-{
-  return [[FBiOSTargetDiagnostics alloc] initWithStorageDirectory:self.auxillaryDirectory];
-}
-
-- (dispatch_queue_t)workQueue
-{
-  return dispatch_get_main_queue();
-}
-
-- (dispatch_queue_t)asyncQueue
-{
-  return dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0);
-}
-
-- (NSDictionary<NSString *, id> *)extendedInformation
-{
-  return self.amDevice.extendedInformation;
+  return nil;
 }
 
 - (NSComparisonResult)compare:(id<FBiOSTarget>)target
@@ -191,21 +172,147 @@
   return version;
 }
 
-#pragma mark Properties
+#pragma mark FBDevice Properties
 
-- (NSString *)buildVersion
+- (void)setAmDevice:(FBAMDevice *)amDevice
 {
-  return self.amDevice.buildVersion;
+  _amDevice = amDevice;
+  [self cacheValuesFromInfo:amDevice overwrite:YES];
 }
 
-- (NSOperatingSystemVersion)operatingSystemVersion
+- (FBAMDevice *)amDevice
 {
-  return [FBDevice operatingSystemVersionFromString:self.amDevice.productVersion];
+  return _amDevice;
 }
 
-- (FBiOSTargetScreenInfo *)screenInfo
+- (void)setRestorableDevice:(FBAMRestorableDevice *)restorableDevice
 {
-  return nil;
+  _restorableDevice = restorableDevice;
+  [self cacheValuesFromInfo:restorableDevice overwrite:NO];
+}
+
+- (FBAMRestorableDevice *)restorableDevice
+{
+  return _restorableDevice;
+}
+
+- (void)cacheValuesFromInfo:(id<FBiOSTargetInfo, FBDevice>)targetInfo overwrite:(BOOL)overwrite
+{
+  // Don't overwrite with nil values.
+  if (!targetInfo) {
+    return;
+  }
+
+  // These values should always be overwitten
+  _calls = targetInfo.calls;
+  _state = targetInfo.state;
+
+  // Overwrite only if requested (i.e. if is the more information FBAMDevice)
+  if (!_allValues || overwrite) {
+    _allValues = targetInfo.allValues;
+  }
+  if (!_architecture || overwrite) {
+    _architecture = targetInfo.architecture;
+  }
+  if (!_buildVersion || overwrite) {
+    _buildVersion = targetInfo.buildVersion;
+  }
+  if (!_deviceType || overwrite) {
+    _deviceType = targetInfo.deviceType;
+  }
+  if (!_extendedInformation || overwrite) {
+    _extendedInformation = targetInfo.extendedInformation;
+  }
+  if (!_name || overwrite) {
+    _name = targetInfo.name;
+  }
+  if (!_osVersion || overwrite) {
+    _osVersion = targetInfo.osVersion;
+  }
+  if (_productVersion || overwrite) {
+    _productVersion = targetInfo.productVersion;
+  }
+  if (!_targetType || overwrite) {
+    _targetType = targetInfo.targetType;
+  }
+  if (!_udid || overwrite) {
+    _udid = targetInfo.udid;
+  }
+  if (!_uniqueIdentifier || overwrite) {
+    _uniqueIdentifier = targetInfo.uniqueIdentifier;
+  }
+}
+
+#pragma mark FBDeviceCommands
+
+- (FBFutureContext<FBAMDevice *> *)connectToDeviceWithPurpose:(NSString *)format, ...
+{
+  FBAMDevice *amDevice = self.amDevice;
+  if (amDevice) {
+    va_list args;
+    va_start(args, format);
+    NSString *string = [[NSString alloc] initWithFormat:format arguments:args];
+    va_end(args);
+    return [amDevice connectToDeviceWithPurpose:@"%@", string];
+  }
+  return [[FBDeviceControlError
+    describeFormat:@"%@ fails when not AMDevice backed.", NSStringFromSelector(_cmd)]
+    failFutureContext];
+}
+
+- (FBFutureContext<FBAMDServiceConnection *> *)startService:(NSString *)service
+{
+  FBAMDevice *amDevice = self.amDevice;
+  if (amDevice) {
+    return [amDevice startService:service];
+  }
+  return [[FBDeviceControlError
+    describeFormat:@"%@ fails when not AMDevice backed.", NSStringFromSelector(_cmd)]
+    failFutureContext];
+}
+
+- (FBFutureContext<FBDeviceLinkClient *> *)startDeviceLinkService:(NSString *)service
+{
+  FBAMDevice *amDevice = self.amDevice;
+  if (amDevice) {
+    return [amDevice startDeviceLinkService:service];
+  }
+  return [[FBDeviceControlError
+    describeFormat:@"%@ fails when not AMDevice backed.", NSStringFromSelector(_cmd)]
+    failFutureContext];
+}
+
+- (FBFutureContext<FBAFCConnection *> *)startAFCService:(NSString *)service
+{
+  FBAMDevice *amDevice = self.amDevice;
+  if (amDevice) {
+    return [amDevice startAFCService:service];
+  }
+  return [[FBDeviceControlError
+    describeFormat:@"%@ fails when not AMDevice backed.", NSStringFromSelector(_cmd)]
+    failFutureContext];
+}
+
+- (FBFutureContext<FBAFCConnection *> *)houseArrestAFCConnectionForBundleID:(NSString *)bundleID afcCalls:(AFCCalls)afcCalls
+{
+  FBAMDevice *amDevice = self.amDevice;
+  if (amDevice) {
+    return [amDevice houseArrestAFCConnectionForBundleID:bundleID afcCalls:afcCalls];
+  }
+  return [[FBDeviceControlError
+    describeFormat:@"%@ fails when not AMDevice backed.", NSStringFromSelector(_cmd)]
+    failFutureContext];
+}
+
+- (FBFuture<FBDeveloperDiskImage *> *)mountDeveloperDiskImage
+{
+  FBAMDevice *amDevice = self.amDevice;
+  if (amDevice) {
+    return [amDevice mountDeveloperDiskImage];
+  }
+  return [[FBDeviceControlError
+    describeFormat:@"%@ fails when not AMDevice backed.", NSStringFromSelector(_cmd)]
+    failFuture];
 }
 
 #pragma mark Forwarding
@@ -220,6 +327,8 @@
       FBDeviceApplicationDataCommands.class,
       FBDeviceCrashLogCommands.class,
       FBDeviceDebuggerCommands.class,
+      FBDeviceDiagnosticInformationCommands.class,
+      FBDeviceLocationCommands.class,
       FBDeviceLogCommands.class,
       FBDeviceScreenshotCommands.class,
       FBDeviceVideoRecordingCommands.class,

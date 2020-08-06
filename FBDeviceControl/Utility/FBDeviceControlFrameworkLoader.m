@@ -15,6 +15,9 @@
 #import "FBAMDevice.h"
 #import "FBAMDevice+Private.h"
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+
 static BOOL IsInitializing = NO;
 
 static asl_object_t FBDeviceControlFrameworkLoader_asl_open(const char *ident, const char *facility, uint32_t opts)
@@ -35,6 +38,8 @@ static asl_object_t FBDeviceControlFrameworkLoader_asl_open(const char *ident, c
 DYLD_INTERPOSE(FBDeviceControlFrameworkLoader_asl_open, asl_open);
 
 #endif
+
+#pragma GCC diagnostic pop
 
 @implementation FBDeviceControlFrameworkLoader
 
@@ -95,6 +100,7 @@ DYLD_INTERPOSE(FBDeviceControlFrameworkLoader_asl_open, asl_open);
   calls->MountImage = FBGetSymbolFromHandle(handle, "AMDeviceMountImage");
   calls->NotificationSubscribe = FBGetSymbolFromHandle(handle, "AMDeviceNotificationSubscribe");
   calls->NotificationUnsubscribe = FBGetSymbolFromHandle(handle, "AMDeviceNotificationUnsubscribe");
+  calls->Pair = FBGetSymbolFromHandle(handle, "AMDevicePair");
   calls->Release = FBGetSymbolFromHandle(handle, "AMDeviceRelease");
   calls->RestorableDeviceCopyBoardConfig = FBGetSymbolFromHandle(handle, "AMRestorableDeviceCopyBoardConfig");
   calls->RestorableDeviceCopyProductString = FBGetSymbolFromHandle(handle, "AMRestorableDeviceCopyProductString");

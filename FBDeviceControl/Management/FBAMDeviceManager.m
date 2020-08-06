@@ -8,6 +8,7 @@
 #import "FBAMDeviceManager.h"
 
 #import "FBAMDevice+Private.h"
+#import "FBAMRestorableDevice.h"
 #import "FBDeviceControlError.h"
 #import "FBDeviceControlFrameworkLoader.h"
 
@@ -15,6 +16,7 @@
 
 @property (nonatomic, strong, readonly) dispatch_queue_t queue;
 @property (nonatomic, assign, readonly) AMDCalls calls;
+@property (nonatomic, copy, nullable, readonly) NSString *ecidFilter;
 @property (nonatomic, assign, readwrite) AMDNotificationSubscription subscription;
 
 - (NSString *)identifierForDevice:(AMDeviceRef)device;
@@ -25,14 +27,20 @@ static BOOL FB_AMDeviceConnected(AMDeviceRef device, FBAMDeviceManager *manager)
 {
   NSError *error = nil;
   id<FBControlCoreLogger> logger = manager.logger;
-  NSString *identifier = [manager identifierForDevice:device];
-  if (!identifier) {
-    [logger.error log:@"Cannot start session with device, identifier could not be obtained %@"];
-    return NO;
-  }
   AMDCalls calls = manager.calls;
   if (![FBAMDeviceManager startUsing:device calls:calls logger:logger error:&error]) {
     [logger.error logFormat:@"Cannot start session with device, ignoring device %@", error];
+    return NO;
+  }
+  NSString *uniqueChipID = [CFBridgingRelease(calls.CopyValue(device, NULL, (__bridge CFStringRef)(FBDeviceKeyUniqueChipID))) stringValue];
+  if (!uniqueChipID) {
+    [FBAMDeviceManager stopUsing:device calls:calls logger:logger error:nil];
+    [logger.error logFormat:@"Ignoring device as cannot obtain ECID for it"];
+    return NO;
+  }
+  if (manager.ecidFilter && ![uniqueChipID isEqualToString:manager.ecidFilter]) {
+    [FBAMDeviceManager stopUsing:device calls:calls logger:logger error:nil];
+    [logger.error logFormat:@"Ignoring device as ECID %@ does not match filter %@", uniqueChipID, manager.ecidFilter];
     return NO;
   }
   NSDictionary<NSString *, id> *info = [CFBridgingRelease(calls.CopyValue(device, NULL, NULL)) copy];
@@ -41,8 +49,13 @@ static BOOL FB_AMDeviceConnected(AMDeviceRef device, FBAMDeviceManager *manager)
     [logger.error log:@"Ignoring device as no values were returned for it"];
     return NO;
   }
+  NSString *udid = info[FBDeviceKeyUniqueDeviceID];
+  if (!udid) {
+    [logger.error logFormat:@"Ignoring device as %@ is not present in %@", FBDeviceKeyUniqueDeviceID, info];
+    return NO;
+  }
   [logger logFormat:@"Obtained Device Values %@", info];
-  [manager deviceConnected:device identifier:identifier info:info];
+  [manager deviceConnected:device identifier:uniqueChipID info:info];
   return YES;
 }
 
@@ -53,11 +66,18 @@ static void FB_AMDeviceListenerCallback(AMDeviceNotification *notification, FBAM
   id<FBControlCoreLogger> logger = manager.logger;
   switch (notificationType) {
     case AMDeviceNotificationTypeConnected:
+    case AMDeviceNotificationTypePaired:
       FB_AMDeviceConnected(device, manager);
       return;
-    case AMDeviceNotificationTypeDisconnected:
+    case AMDeviceNotificationTypeDisconnected: {
+      NSString *identifier = [manager identifierForDevice:device];
+      if (!identifier) {
+        [logger logFormat:@"Cannot obtain identifier for device %@", device];
+        return;
+      }
       [manager deviceDisconnected:device identifier:[manager identifierForDevice:device]];
       return;
+    }
     case AMDeviceNotificationTypeUnsubscribed:
       [logger logFormat:@"Unsubscribed from AMDeviceNotificationSubscribe"];
       return;
@@ -71,35 +91,16 @@ static void FB_AMDeviceListenerCallback(AMDeviceNotification *notification, FBAM
 
 #pragma mark Initializers
 
-+ (FBAMDeviceManager *)sharedManager
-{
-  static dispatch_once_t onceToken;
-  static FBAMDeviceManager *manager;
-  dispatch_once(&onceToken, ^{
-    id<FBControlCoreLogger> logger = [FBControlCoreGlobalConfiguration.defaultLogger withName:@"amdevice_manager"];
-    manager = [self managerWithCalls:FBDeviceControlFrameworkLoader.amDeviceCalls queue:dispatch_get_main_queue() logger:logger];
-  });
-  return manager;
-}
-
-+ (FBAMDeviceManager *)managerWithCalls:(AMDCalls)calls queue:(dispatch_queue_t)queue logger:(id<FBControlCoreLogger>)logger
-{
-  FBAMDeviceManager *manager = [[self alloc] initWithCalls:calls queue:queue logger:logger];
-  NSError *error = nil;
-  BOOL success = [manager startListeningWithError:&error];
-  NSAssert(success, @"Failed to Start Listening %@", error);
-  return manager;
-}
-
-- (instancetype)initWithCalls:(AMDCalls)calls queue:(dispatch_queue_t)queue logger:(id<FBControlCoreLogger>)logger
+- (instancetype)initWithCalls:(AMDCalls)calls queue:(dispatch_queue_t)queue ecidFilter:(NSString *)ecidFilter logger:(id<FBControlCoreLogger>)logger
 {
   self = [super initWithLogger:logger];
   if (!self) {
     return nil;
   }
 
-  _queue = queue;
   _calls = calls;
+  _queue = queue;
+  _ecidFilter = ecidFilter;
 
   return self;
 }
@@ -125,9 +126,15 @@ static void FB_AMDeviceListenerCallback(AMDeviceNotification *notification, FBAM
 
   [logger logFormat:@"Checking whether %@ is paired", device];
   if (!calls.IsPaired(device)) {
-    return [[FBDeviceControlError
-      describeFormat:@"%@ is not paired with this host", device]
-      failBool:error];
+    [logger logFormat:@"%@ is not paired, attempting to pair", device];
+    status = calls.Pair(device);
+    if (status != 0) {
+      NSString *errorDescription = CFBridgingRelease(calls.CopyErrorText(status));
+      return [[FBDeviceControlError
+        describeFormat:@"%@ is not paired with this host %@", device, errorDescription]
+        failBool:error];
+    }
+    [logger logFormat:@"%@ succeeded pairing request", device];
   }
 
   [logger logFormat:@"Validating Pairing to %@", device];
@@ -226,7 +233,7 @@ static const NSTimeInterval ServiceReuseTimeout = 6.0;
 
 - (id)constructPublic:(AMDeviceRef)privateDevice identifier:(NSString *)identifier info:(NSDictionary<NSString *,id> *)info
 {
-  return [[FBAMDevice alloc] initWithUDID:identifier allValues:info calls:self.calls connectionReuseTimeout:nil serviceReuseTimeout:@(ServiceReuseTimeout) workQueue:self.queue logger:self.logger];
+  return [[FBAMDevice alloc] initWithAllValues:info calls:self.calls connectionReuseTimeout:nil serviceReuseTimeout:@(ServiceReuseTimeout) workQueue:self.queue logger:self.logger];
 }
 
 + (void)updatePublicReference:(FBAMDevice *)publicDevice privateDevice:(AMDeviceRef)privateDevice identifier:(NSString *)identifier info:(NSDictionary<NSString *,id> *)info
@@ -259,9 +266,18 @@ static const NSTimeInterval ServiceReuseTimeout = 6.0;
   return YES;
 }
 
-- (NSString *)identifierForDevice:(AMDeviceRef)device
+- (NSString *)identifierForDevice:(AMDeviceRef)amDevice
 {
-  return CFBridgingRelease(self.calls.CopyDeviceIdentifier(device));
+  if (amDevice == NULL) {
+    return nil;
+  }
+  for (FBAMDevice *device in self.storage.referenced.allValues) {
+    if (device.amDevice != amDevice) {
+      continue;
+    }
+    return device.uniqueIdentifier;
+  }
+  return nil;
 }
 
 @end

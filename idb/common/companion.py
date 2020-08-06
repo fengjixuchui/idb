@@ -5,21 +5,32 @@
 # LICENSE file in the root directory of this source tree.
 
 import asyncio
+import json
 import logging
 import subprocess
 from logging import Logger
 from sys import platform
-from typing import AsyncContextManager, List, Optional
+from typing import AsyncContextManager, Dict, List, Optional, Union
 
 from idb.common.format import target_description_from_json
 from idb.common.logging import log_call
-from idb.common.types import IdbException, TargetDescription, TargetType
+from idb.common.types import (
+    ECIDFilter,
+    IdbException,
+    OnlyFilter,
+    TargetDescription,
+    TargetType,
+)
 from idb.utils.contextlib import asynccontextmanager
 from idb.utils.typing import none_throws
 
 
 DEFAULT_COMPANION_COMMAND_TIMEOUT = 120
 DEFAULT_COMPANION_TEARDOWN_TIMEOUT = 30
+
+
+class IdbJsonException(Exception):
+    pass
 
 
 async def _terminate_process(
@@ -39,6 +50,22 @@ async def _terminate_process(
         process.kill()
 
 
+def _only_arg_from_filter(only: Optional[OnlyFilter]) -> List[str]:
+    if isinstance(only, TargetType):
+        return ["--only", "simulator" if only is TargetType.SIMULATOR else "device"]
+    elif isinstance(only, ECIDFilter):
+        return ["--only", f"ecid:{only.ecid}"]
+    return []
+
+
+def parse_json_line(line: bytes) -> Dict[str, Union[int, str]]:
+    decoded_line = line.decode()
+    try:
+        return json.loads(decoded_line)
+    except json.JSONDecodeError:
+        raise IdbJsonException(f"Failed to parse json from: {decoded_line}")
+
+
 class Companion:
     def __init__(
         self,
@@ -55,6 +82,8 @@ class Companion:
         self._companion_teardown_timeout = companion_teardown_timeout
 
     @asynccontextmanager
+    # pyre-fixme[57]: Expected return annotation to be AsyncGenerator or a
+    #  superclass but got `AsyncContextManager[asyncio.subprocess.Process]`.
     async def _start_companion_command(
         self, arguments: List[str]
     ) -> AsyncContextManager[asyncio.subprocess.Process]:
@@ -114,6 +143,8 @@ class Companion:
         await self._run_udid_command(udid=udid, command="boot")
 
     @asynccontextmanager
+    # pyre-fixme[57]: Expected return annotation to be AsyncGenerator or a
+    #  superclass but got `AsyncContextManager[None]`.
     async def boot_headless(self, udid: str) -> AsyncContextManager[None]:
         async with self._start_companion_command(
             ["--headless", "1", "--boot", udid]
@@ -151,13 +182,9 @@ class Companion:
 
     @log_call()
     async def list_targets(
-        self, only: Optional[TargetType] = None
+        self, only: Optional[OnlyFilter] = None
     ) -> List[TargetDescription]:
-        arguments = ["--list", "1"]
-        if only is not None:
-            arguments.extend(
-                ["--only", "simulator" if only is TargetType.SIMULATOR else "device"]
-            )
+        arguments = ["--list", "1"] + _only_arg_from_filter(only=only)
         output = await self._run_companion_command(arguments=arguments)
         return [
             target_description_from_json(data=line.strip())
@@ -167,12 +194,31 @@ class Companion:
 
     @log_call()
     async def target_description(
-        self, udid: str, only: Optional[TargetType] = None
+        self, udid: Optional[str] = None, only: Optional[OnlyFilter] = None
     ) -> TargetDescription:
         all_details = await self.list_targets(only=only)
-        details = [target for target in all_details if target.udid == udid]
+        details = all_details
+        if udid is not None:
+            details = [target for target in all_details if target.udid == udid]
         if len(details) > 1:
             raise IdbException(f"More than one device info found {details}")
         if len(details) == 0:
             raise IdbException(f"No device info found, got {all_details}")
         return details[0]
+
+    @asynccontextmanager
+    # pyre-fixme[57]: Expected return annotation to be AsyncGenerator or a
+    #  superclass but got `AsyncContextManager[str]`.
+    async def unix_domain_server(
+        self, udid: str, path: str
+    ) -> AsyncContextManager[str]:
+        async with self._start_companion_command(
+            ["--udid", udid, "--grpc-domain-sock", path]
+        ) as process:
+            line = await none_throws(process.stdout).readline()
+            output = parse_json_line(line)
+            grpc_path = output.get("grpc_path")
+            if grpc_path is None:
+                raise IdbException(f"No grpc_path in {line}")
+            self._logger.info(f"Started domain sock server on {grpc_path}")
+            yield grpc_path

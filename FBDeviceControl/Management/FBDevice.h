@@ -18,22 +18,12 @@ NS_ASSUME_NONNULL_BEGIN
 /**
  A class that represents an iOS Device.
  */
-@interface FBDevice : NSObject <FBiOSTarget, FBDeviceCommands>
+@interface FBDevice : NSObject <FBiOSTarget, FBDeviceCommands, FBDiagnosticInformationCommands, FBLocationCommands>
 
 /**
  The Device Set to which the Device Belongs.
  */
 @property (nonatomic, weak, readonly) FBDeviceSet *set;
-
-/**
- Device's 'Product Version'
- */
-@property (nonatomic, copy, readonly) NSString *buildVersion;
-
-/**
- Interpolated NSOperatingSystemVersion.
- */
-@property (nonatomic, assign, readonly) NSOperatingSystemVersion operatingSystemVersion;
 
 /**
  Constructs an Operating System Version from a string.

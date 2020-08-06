@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import (
     Any,
     AsyncContextManager,
+    AsyncGenerator,
     AsyncIterable,
     AsyncIterator,
     Dict,
@@ -30,6 +31,7 @@ from typing import (
 from grpclib.client import Channel
 from grpclib.exceptions import GRPCError, ProtocolError, StreamTerminatedError
 from idb.common.constants import TESTS_POLL_INTERVAL
+from idb.common.file import drain_to_file
 from idb.common.gzip import drain_gzip_decompress
 from idb.common.hid import (
     button_press_to_events,
@@ -65,6 +67,7 @@ from idb.common.types import (
     TargetDescription,
     TCPAddress,
     TestRunInfo,
+    VideoFormat,
 )
 from idb.grpc.crash import (
     _to_crash_log,
@@ -104,6 +107,7 @@ from idb.grpc.idb_pb2 import (
     TargetDescriptionRequest,
     TerminateRequest,
     UninstallRequest,
+    VideoStreamRequest,
     XctestListBundlesRequest,
     XctestListTestsRequest,
 )
@@ -146,6 +150,10 @@ APPROVE_MAP: Dict[Permission, ApproveRequest] = {
     Permission.NOTIFICATION: ApproveRequest.NOTIFICATION,
 }
 
+VIDEO_FORMAT_MAP: Dict[VideoFormat, VideoStreamRequest] = {
+    VideoFormat.H264: VideoStreamRequest.H264,
+    VideoFormat.RBGA: VideoStreamRequest.RBGA,
+}
 
 CLIENT_METADATA: LoggingMetadata = {"component": "client"}
 
@@ -198,6 +206,8 @@ class IdbClient(IdbClientBase):
 
     @classmethod
     @asynccontextmanager
+    # pyre-fixme[57]: Expected return annotation to be AsyncGenerator or a
+    #  superclass but got `AsyncContextManager[IdbClient]`.
     async def build(
         cls, address: Address, is_local: bool, logger: logging.Logger
     ) -> AsyncContextManager["IdbClient"]:
@@ -371,8 +381,10 @@ class IdbClient(IdbClientBase):
         await self.stub.terminate(TerminateRequest(bundle_id=bundle_id))
 
     @log_and_handle_exceptions
-    async def describe(self) -> TargetDescription:
-        response = await self.stub.describe(TargetDescriptionRequest())
+    async def describe(self, fetch_diagnostics: bool = False) -> TargetDescription:
+        response = await self.stub.describe(
+            TargetDescriptionRequest(fetch_diagnostics=fetch_diagnostics)
+        )
         target = response.target_description
         return target_to_py(
             target=target,
@@ -625,7 +637,7 @@ class IdbClient(IdbClientBase):
         timings: Optional[InstrumentsTimings] = None,
         post_process_arguments: Optional[List[str]] = None,
     ) -> List[str]:
-        self.logger.info(f"Starting instruments connection")
+        self.logger.info("Starting instruments connection")
         async with self.stub.instruments_run.open() as stream:
             self.logger.info("Sending instruments request")
             await stream.send_message(
@@ -722,7 +734,7 @@ class IdbClient(IdbClientBase):
 
     @log_and_handle_exceptions
     async def record_video(self, stop: asyncio.Event, output_file: str) -> None:
-        self.logger.info(f"Starting connection to backend")
+        self.logger.info("Starting connection to backend")
         async with self.stub.record.open() as stream:
             if self.is_local:
                 self.logger.info(
@@ -732,7 +744,7 @@ class IdbClient(IdbClientBase):
                     RecordRequest(start=RecordRequest.Start(file_path=output_file))
                 )
             else:
-                self.logger.info(f"Starting video recording with response data")
+                self.logger.info("Starting video recording with response data")
                 await stream.send_message(
                     RecordRequest(start=RecordRequest.Start(file_path=None))
                 )
@@ -749,6 +761,48 @@ class IdbClient(IdbClientBase):
                     generate_video_bytes(stream), output_path=output_file
                 )
                 self.logger.info(f"Finished decompression to {output_file}")
+
+    async def stream_video(
+        self, output_file: Optional[str], fps: Optional[int], format: VideoFormat
+    ) -> AsyncGenerator[bytes, None]:
+        self.logger.info("Starting connection to backend")
+        async with self.stub.video_stream.open() as stream:
+            if self.is_local and output_file:
+                self.logger.info(
+                    f"Streaming locally with companion writing to {output_file}"
+                )
+                await stream.send_message(
+                    VideoStreamRequest(
+                        start=VideoStreamRequest.Start(
+                            file_path=output_file,
+                            fps=fps,
+                            format=VIDEO_FORMAT_MAP[format],
+                        )
+                    )
+                )
+            else:
+                self.logger.info("Starting streaming over the wire")
+                await stream.send_message(
+                    VideoStreamRequest(
+                        start=VideoStreamRequest.Start(
+                            file_path=None, fps=fps, format=VIDEO_FORMAT_MAP[format]
+                        )
+                    )
+                )
+            try:
+                iterator = generate_bytes(stream=stream, logger=self.logger)
+                if output_file and not self.is_local:
+                    self.logger.info(f"Writing wired bytes to {output_file}")
+                    await drain_to_file(stream=iterator, file_path=output_file)
+                else:
+                    async for data in iterator:
+                        yield data
+            finally:
+                self.logger.info("Stopping video streaming")
+                await stream.send_message(
+                    VideoStreamRequest(stop=VideoStreamRequest.Stop())
+                )
+                await stream.end()
 
     @log_and_handle_exceptions
     async def run_xctest(
@@ -800,7 +854,6 @@ class IdbClient(IdbClientBase):
                 for line in [
                     line
                     for lines in response.log_output
-                    # pyre-fixme[10]: Name `lines` is used but not defined.
                     for line in lines.splitlines(keepends=True)
                 ]:
                     self._log_from_companion(line)

@@ -39,18 +39,24 @@ async def drain_to_stream(
         async for message in generator:
             await stream.send_message(message)
         await stream.end()
-        logger.debug(f"Streamed all chunks to companion, waiting for completion")
+        logger.debug("Streamed all chunks to companion, waiting for completion")
         response = none_throws(await stream.recv_message())
-        logger.debug(f"Companion completed")
+        logger.debug("Companion completed")
         # pyre-fixme[7]: Expected `_TRecv` but got `object`.
         return response
 
 
 async def generate_bytes(
-    stream: AsyncIterator[Any],  # pyre-ignore
+    stream: AsyncIterator[Any], logger: Optional[Logger] = None  # pyre-ignore
 ) -> AsyncIterator[bytes]:
-    async for response in stream:
-        yield response.payload.data
+    async for item in stream:
+        log_output = getattr(item, "log_output", None)
+        if log_output is not None and len(log_output) and logger:
+            logger.info(log_output)
+            continue
+        data = item.payload.data
+        if len(data):
+            yield data
 
 
 async def stop_wrapper(

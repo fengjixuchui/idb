@@ -46,6 +46,8 @@ def _get_management_client(
 
 
 @asynccontextmanager
+# pyre-fixme[57]: Expected return annotation to be AsyncGenerator or a superclass
+#  but got `AsyncContextManager[IdbClientGrpc]`.
 async def _get_client(
     args: Namespace, logger: logging.Logger
 ) -> AsyncContextManager[IdbClientGrpc]:
@@ -93,7 +95,7 @@ class BaseCommand(Command, metaclass=ABCMeta):
         self.logger.debug(f"{name} command run with: {args}")
         if args.log_level_deprecated is not None:
             self.logger.warning(
-                f"Setting --log after the command is deprecated, please place it at the start of the invocation"
+                "Setting --log after the command is deprecated, please place it at the start of the invocation"
             )
         async with log_call(
             name=name, metadata=plugin.resolve_metadata(logger=self.logger)

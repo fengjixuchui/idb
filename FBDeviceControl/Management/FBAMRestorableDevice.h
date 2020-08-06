@@ -9,22 +9,38 @@
 
 #import <FBControlCore/FBControlCore.h>
 #import <FBDeviceControl/FBAMDefines.h>
+#import <FBDeviceControl/FBDeviceCommands.h>
 
 NS_ASSUME_NONNULL_BEGIN
+
+typedef NSString *FBDeviceKey NS_STRING_ENUM;
+extern FBDeviceKey const FBDeviceKeyChipID;
+extern FBDeviceKey const FBDeviceKeyDeviceClass;
+extern FBDeviceKey const FBDeviceKeyDeviceName;
+extern FBDeviceKey const FBDeviceKeyLocationID;
+extern FBDeviceKey const FBDeviceKeyProductType;
+extern FBDeviceKey const FBDeviceKeySerialNumber;
+extern FBDeviceKey const FBDeviceKeyUniqueChipID;
+extern FBDeviceKey const FBDeviceKeyUniqueDeviceID;
+extern FBDeviceKey const FBDeviceKeyCPUArchitecture;
+extern FBDeviceKey const FBDeviceKeyBuildVersion;
+extern FBDeviceKey const FBDeviceKeyProductVersion;
 
 /**
  An Object Wrapper around AMRestorableDevice
  */
-@interface FBAMRestorableDevice : NSObject <FBiOSTargetInfo>
+@interface FBAMRestorableDevice : NSObject <FBiOSTargetInfo, FBDevice>
 
 /**
  The Designated Initializer.
 
  @param calls the calls to use.
  @param restorableDevice the AMRestorableDeviceRef
+ @param allValues the cached device values.
+ @param logger the logger to use.
  @return a new instance.
  */
-- (instancetype)initWithCalls:(AMDCalls)calls restorableDevice:(AMRestorableDeviceRef)restorableDevice;
+- (instancetype)initWithCalls:(AMDCalls)calls restorableDevice:(AMRestorableDeviceRef)restorableDevice allValues:(NSDictionary<NSString *, id> *)allValues logger:(id<FBControlCoreLogger>)logger;
 
 /**
  The Restorable Device instance.
@@ -32,9 +48,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign, readwrite) AMRestorableDeviceRef restorableDevice;
 
 /**
- The AMDCalls to use
+ Cached Device Values.
  */
-@property (nonatomic, assign, readwrite) AMDCalls calls;
+@property (nonatomic, copy, readwrite) NSDictionary<NSString *, id> *allValues;
 
 /**
  Convert AMRestorableDeviceState to FBiOSTargetState.

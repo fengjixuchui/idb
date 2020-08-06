@@ -250,10 +250,13 @@
 
 - (FBFuture<NSNull *> *)set_location:(double)latitude longitude:(double)longitude
 {
-  return [self.connectToSimulatorBridge
-    onQueue:self.target.workQueue fmap:^FBFuture<NSNull *> *(FBSimulatorBridge *bridge) {
-      return [bridge setLocationWithLatitude:latitude longitude:longitude];
-    }];
+  id<FBLocationCommands> commands = (id<FBLocationCommands>) self.target;
+  if (![commands conformsToProtocol:@protocol(FBLocationCommands)]) {
+    return [[FBIDBError
+      describeFormat:@"%@ does not conform to FBLocationCommands", commands]
+      failFuture];
+  }
+  return [commands overrideLocationWithLongitude:longitude latitude:latitude];
 }
 
 - (FBFuture<NSNull *> *)clear_keychain
@@ -457,6 +460,16 @@ static const NSTimeInterval ListTestBundleTimeout = 60.0;
   return [self.logger tailToConsumer:consumer];
 }
 
+- (FBFuture<NSDictionary<NSString *, id> *> *)diagnostic_information
+{
+  id<FBDiagnosticInformationCommands> commands = (id<FBDiagnosticInformationCommands>) self.target;
+  if (![commands conformsToProtocol:@protocol(FBDiagnosticInformationCommands)]) {
+    // Don't fail, just return empty.
+    return [FBFuture futureWithResult:@{}];
+  }
+  return [commands fetchDiagnosticInformation];
+}
+
 #pragma mark Private Methods
 
 - (FBFuture<id<FBiOSTargetFileCommands>> *)applicationDataContainerCommands:(NSString *)bundleID
@@ -552,15 +565,6 @@ static const NSTimeInterval ListTestBundleTimeout = 60.0;
           failFuture];
       }
       return [commands connect];
-    }];
-}
-
-- (FBFuture<FBSimulatorBridge *> *)connectToSimulatorBridge
-{
-  return [[self
-    connectToSimulatorConnection]
-    onQueue:self.target.workQueue fmap:^(FBSimulatorConnection *connection) {
-      return [connection connectToBridge];
     }];
 }
 

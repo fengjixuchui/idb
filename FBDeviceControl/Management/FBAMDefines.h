@@ -19,6 +19,10 @@ typedef CFTypeRef AMDeviceRef;
  */
 typedef CFTypeRef AFCConnectionRef;
 
+/**
+ The Connection Reference as is typically passed around between functions.
+ */
+typedef CFTypeRef AMDServiceConnectionRef;
 
 /**
  Used inside AFC Operations.
@@ -50,6 +54,7 @@ typedef NS_ENUM(int, AMDeviceNotificationType) {
   AMDeviceNotificationTypeConnected = 1,
   AMDeviceNotificationTypeDisconnected = 2,
   AMDeviceNotificationTypeUnsubscribed = 3,
+  AMDeviceNotificationTypePaired = 4,
 };
 
 typedef NS_ENUM(int, AMRestorableDeviceNotificationType) {
@@ -107,9 +112,10 @@ typedef struct {
   int (*Connect)(AMDeviceRef device);
   int (*Disconnect)(AMDeviceRef device);
   int (*IsPaired)(AMDeviceRef device);
-  int (*ValidatePairing)(AMDeviceRef device);
+  int (*Pair)(AMDeviceRef device);
   int (*StartSession)(AMDeviceRef device);
   int (*StopSession)(AMDeviceRef device);
+  int (*ValidatePairing)(AMDeviceRef device);
 
   // Memory Management
   void (*Retain)(AMDeviceRef device);
@@ -127,9 +133,9 @@ typedef struct {
   // Using Connections.
   int (*ServiceConnectionGetSocket)(CFTypeRef connection);
   int (*ServiceConnectionInvalidate)(CFTypeRef connection);
-  size_t (*ServiceConnectionReceive)(CFTypeRef connection, void *buffer, size_t bytes);
+  ssize_t (*ServiceConnectionReceive)(CFTypeRef connection, void *buffer, size_t bytes);
   int (*ServiceConnectionReceiveMessage)(CFTypeRef connection, CFPropertyListRef *messageOut, CFPropertyListFormat *formatOut, void *unknown0, void *unknown1, void *unknown2);
-  size_t (*ServiceConnectionSend)(CFTypeRef connection, const void *buffer, size_t bytes);
+  ssize_t (*ServiceConnectionSend)(CFTypeRef connection, const void *buffer, size_t bytes);
   int (*ServiceConnectionSendMessage)(CFTypeRef connection, CFPropertyListRef propertyList, CFPropertyListFormat format, void *unknown0, CFDictionaryKeyCallBacks *keyCallbacks, CFDictionaryValueCallBacks *valueCallbacks);
   int (*ServiceConnectionGetSecureIOContext)(CFTypeRef connection);
 

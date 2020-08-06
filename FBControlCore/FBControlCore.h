@@ -38,8 +38,10 @@
 #import <FBControlCore/FBDebugDescribeable.h>
 #import <FBControlCore/FBDebuggerCommands.h>
 #import <FBControlCore/FBDiagnostic.h>
+#import <FBControlCore/FBDiagnosticInformationCommands.h>
 #import <FBControlCore/FBDiagnosticQuery.h>
 #import <FBControlCore/FBDispatchSourceNotifier.h>
+#import <FBControlCore/FBEraseCommands.h>
 #import <FBControlCore/FBEventConstants.h>
 #import <FBControlCore/FBEventInterpreter.h>
 #import <FBControlCore/FBEventReporter.h>
@@ -68,6 +70,7 @@
 #import <FBControlCore/FBLaunchedProcess.h>
 #import <FBControlCore/FBListApplicationsConfiguration.h>
 #import <FBControlCore/FBLocalizationOverride.h>
+#import <FBControlCore/FBLocationCommands.h>
 #import <FBControlCore/FBLogCommands.h>
 #import <FBControlCore/FBLoggingWrapper.h>
 #import <FBControlCore/FBLogSearch.h>

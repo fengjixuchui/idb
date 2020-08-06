@@ -17,6 +17,9 @@
 @property (nonatomic, strong, readonly) dispatch_queue_t queue;
 @property (nonatomic, assign, readonly) AMDCalls calls;
 @property (nonatomic, assign, readwrite) int registrationID;
+@property (nonatomic, copy, readonly) NSString *ecidFilter;
+
+- (NSDictionary<NSString *, id> *)infoForRestorableDevice:(AMRestorableDeviceRef)device;
 
 @end
 
@@ -40,18 +43,17 @@ static void FB_AMRestorableDeviceListenerCallback(AMRestorableDeviceRef device, 
   FBiOSTargetState targetState = [FBAMRestorableDevice targetStateForDeviceState:deviceState];
   NSString *identifier = [@(manager.calls.RestorableDeviceGetECID(device)) stringValue];
   [logger logFormat:@"%@ %@ in state %@", device, NotificationTypeToString(status), FBiOSTargetStateStringFromState(targetState)];
-  switch (deviceState) {
-    case AMRestorableDeviceStateBootedOS:
-    case AMRestorableDeviceStateUnknown:
-      [logger logFormat:@"Ignoring %@ as a restorable device as it is %@", device, FBiOSTargetStateStringFromState(targetState)];
-      return;
-    default:
-      break;
+  if (manager.ecidFilter && ![identifier isEqualToString:manager.ecidFilter]) {
+    [logger logFormat:@"Ignoring %@ as it does not match filter of %@", device, manager.ecidFilter];
+    return;
   }
   switch (status) {
-    case AMRestorableDeviceNotificationTypeConnected:
-      [manager deviceConnected:device identifier:identifier info:nil];
+    case AMRestorableDeviceNotificationTypeConnected: {
+      NSDictionary<NSString *, id> *info = [manager infoForRestorableDevice:device];
+      [logger logFormat:@"Caching restorable device values %@", info];
+      [manager deviceConnected:device identifier:identifier info:info];
       return;
+    }
     case AMRestorableDeviceNotificationTypeDisconnected:
       [manager deviceDisconnected:device identifier:identifier];
       return;
@@ -65,15 +67,16 @@ static void FB_AMRestorableDeviceListenerCallback(AMRestorableDeviceRef device, 
 
 #pragma mark Initializers
 
-- (instancetype)initWithLogger:(id<FBControlCoreLogger>)logger
+- (instancetype)initWithCalls:(AMDCalls)calls queue:(dispatch_queue_t)queue ecidFilter:(NSString *)ecidFilter logger:(id<FBControlCoreLogger>)logger
 {
   self = [super initWithLogger:logger];
   if (!self) {
     return nil;
   }
 
-  _queue = dispatch_get_main_queue();
-  _calls = FBDeviceControlFrameworkLoader.amDeviceCalls;
+  _calls = calls;
+  _queue = queue;
+  _ecidFilter = ecidFilter;
 
   return self;
 }
@@ -115,17 +118,31 @@ static void FB_AMRestorableDeviceListenerCallback(AMRestorableDeviceRef device, 
 
 - (FBAMRestorableDevice *)constructPublic:(AMRestorableDeviceRef)privateDevice identifier:(NSString *)identifier info:(NSDictionary<NSString *,id> *)info
 {
-  return [[FBAMRestorableDevice alloc] initWithCalls:self.calls restorableDevice:privateDevice];
+  return [[FBAMRestorableDevice alloc] initWithCalls:self.calls restorableDevice:privateDevice allValues:info logger:[self.logger withName:identifier]];
 }
 
 + (void)updatePublicReference:(FBAMRestorableDevice *)publicDevice privateDevice:(AMRestorableDeviceRef)privateDevice identifier:(NSString *)identifier info:(NSDictionary<NSString *,id> *)info
 {
   publicDevice.restorableDevice = privateDevice;
+  publicDevice.allValues = info;
 }
 
 + (AMRestorableDeviceRef)extractPrivateReference:(FBAMRestorableDevice *)publicDevice
 {
   return publicDevice.restorableDevice;
+}
+
+- (NSDictionary<NSString *, id> *)infoForRestorableDevice:(AMRestorableDeviceRef)device
+{
+  return @{
+    FBDeviceKeyChipID: @(self.calls.RestorableDeviceGetChipID(device)),
+    FBDeviceKeyDeviceClass: @(self.calls.RestorableDeviceGetDeviceClass(device)),
+    FBDeviceKeyLocationID: @(self.calls.RestorableDeviceGetLocationID(device)),
+    FBDeviceKeySerialNumber: CFBridgingRelease(self.calls.RestorableDeviceCopySerialNumber(device)) ?: NSNull.null,
+    FBDeviceKeyDeviceName: CFBridgingRelease(self.calls.RestorableDeviceCopyUserFriendlyName(device)) ?: NSNull.null,
+    FBDeviceKeyProductType: CFBridgingRelease(self.calls.RestorableDeviceCopyProductString(device)) ?: NSNull.null,
+    FBDeviceKeyUniqueChipID: @(self.calls.RestorableDeviceGetECID(device)),
+  };
 }
 
 @end
