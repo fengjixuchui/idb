@@ -25,7 +25,7 @@
 const char *kUsageHelpMessage = "\
 Usage: \n \
   Modes of operation, only one of these may be specified:\n\
-    --udid UDID                Launches a companion server for the specified UDID.\n\
+    --udid UDID|mac|only       Launches a companion server for the specified UDID, 'mac' for a mac companion, or 'only' to run a companion for the only simulator/device available.\n\
     --boot UDID                Boots the simulator with the specified UDID.\n\
     --shutdown UDID            Shuts down the simulator with the specified UDID.\n\
     --erase UDID               Erases the simulator with the specified UDID.\n\
@@ -33,6 +33,8 @@ Usage: \n \
     --create VALUE             Creates a simulator using the VALUE argument like \"iPhone X,iOS 12.4\"\n\
     --clone UDID               Clones a simulator by a given UDID\n\
     --clone-destination-set    A path to the destination device set in a clone operation, --device-set-path specifies the source simulator.\n\
+    --recover ecid:ECID        Causes the targeted device ECID to enter recovery mode\n\
+    --unrecover ecid:ECID      Causes the targeted device ECID to exit recovery mode\n\
     --notify PATH|stdout       Launches a companion notifier which will stream availability updates to the specified path, or stdout.\n\
     --list 1                   Lists all available devices/simulators in the current context.\n\
     --help                     Show this help message and exit.\n\
@@ -45,6 +47,7 @@ Usage: \n \
     --device-set-path PATH     Path to a custom Simulator device set.\n\
     --only FILTER_OPTION       If provided, will limit interaction to a subset of all available targets\n\
     --headless VALUE           If VALUE is a true value, the Simulator boot's lifecycle will be tied to the lifecycle of this invocation.\n\
+    --verify-booted VALUE      If VALUE is a true value, will verify that the Simulator is in a known-booted state before --boot completes. Default is true.\n\
     --terminate-offline VALUE  Terminate if the target goes offline, otherwise the companion will stay alive.\n\
 \n\
  Filter Options:\n\
@@ -149,6 +152,20 @@ static FBFuture<id<FBiOSTarget>> *TargetForUDID(NSString *udid, NSUserDefaults *
     }];
 }
 
+static FBFuture<FBDevice *> *DeviceForECID(NSString *ecid, id<FBControlCoreLogger> logger)
+{
+  return [DeviceSet(logger, [ecid stringByReplacingOccurrencesOfString:@"ecid:" withString:@""])
+    onQueue:dispatch_get_main_queue() fmap:^ FBFuture<NSNull *> * (FBDeviceSet *deviceSet) {
+      NSArray<FBDevice *> *devices = deviceSet.allDevices;
+      if (devices.count == 0) {
+        return [[FBIDBError
+          describeFormat:@"No devices %@ matching %@", [FBCollectionInformation oneLineDescriptionFromArray:devices], ecid]
+          failFuture];
+      }
+      return [FBFuture futureWithResult:devices.firstObject];
+    }];
+}
+
 static FBFuture<FBSimulator *> *SimulatorFuture(NSString *udid, NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
 {
   return [[SimulatorSet(userDefaults, logger, reporter)
@@ -182,6 +199,7 @@ static FBFuture<NSNull *> *TargetOfflineFuture(id<FBiOSTarget> target, id<FBCont
 static FBFuture<FBFuture<NSNull *> *> *BootFuture(NSString *udid, NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
 {
   BOOL headless = [userDefaults boolForKey:@"-headless"];
+  BOOL verifyBooted = [userDefaults objectForKey:@"-verify-booted"] == nil ? YES : [userDefaults boolForKey:@"-verify-booted"];
   return [[SimulatorFuture(udid, userDefaults, logger, reporter)
     onQueue:dispatch_get_main_queue() fmap:^(FBSimulator *simulator) {
       // Boot the simulator with the options provided.
@@ -191,6 +209,14 @@ static FBFuture<FBFuture<NSNull *> *> *BootFuture(NSString *udid, NSUserDefaults
         config = [config withOptions:(config.options | FBSimulatorBootOptionsEnableDirectLaunch)];
       } else {
         [logger logFormat:@"Booting %@ normally", udid];
+        config = [config withOptions:(config.options & ~FBSimulatorBootOptionsEnableDirectLaunch)];
+      }
+      if (verifyBooted) {
+        [logger logFormat:@"Booting %@ with verification", udid];
+        config = [config withOptions:(config.options | FBSimulatorBootOptionsVerifyUsable)];
+      } else {
+        [logger logFormat:@"Booting %@ without verification", udid];
+        config = [config withOptions:(config.options & ~FBSimulatorBootOptionsVerifyUsable)];
       }
       return [[simulator bootWithConfiguration:config] mapReplace:simulator];
     }]
@@ -310,6 +336,21 @@ static FBFuture<NSNull *> *CloneFuture(NSString *udid, NSUserDefaults *userDefau
     }];
 }
 
+static FBFuture<NSNull *> *EnterRecoveryFuture(NSString *ecid, id<FBControlCoreLogger> logger)
+{
+  return [DeviceForECID(ecid, logger)
+    onQueue:dispatch_get_main_queue() fmap:^ FBFuture<NSNull *> * (FBDevice *device) {
+      return [device enterRecovery];
+    }];
+}
+static FBFuture<NSNull *> *ExitRecoveryFuture(NSString *ecid, id<FBControlCoreLogger> logger)
+{
+  return [DeviceForECID(ecid, logger)
+    onQueue:dispatch_get_main_queue() fmap:^ FBFuture<NSNull *> * (FBDevice *device) {
+      return [device exitRecovery];
+    }];
+}
+
 static FBFuture<FBFuture<NSNull *> *> *CompanionServerFuture(NSString *udid, NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
 {
   BOOL terminateOffline = [userDefaults boolForKey:@"-terminate-offline"];
@@ -369,15 +410,17 @@ static FBFuture<FBFuture<NSNull *> *> *NotiferFuture(NSString *notify, NSUserDef
 }
 
 static FBFuture<FBFuture<NSNull *> *> *GetCompanionCompletedFuture(int argc, const char *argv[], NSUserDefaults *userDefaults, FBIDBLogger *logger) {
-  NSString *udid = [userDefaults stringForKey:@"-udid"];
-  NSString *notify = [userDefaults stringForKey:@"-notify"];
   NSString *boot = [userDefaults stringForKey:@"-boot"];
-  NSString *create = [userDefaults stringForKey:@"-create"];
-  NSString *shutdown = [userDefaults stringForKey:@"-shutdown"];
-  NSString *erase = [userDefaults stringForKey:@"-erase"];
-  NSString *delete = [userDefaults stringForKey:@"-delete"];
-  NSString *list = [userDefaults stringForKey:@"-list"];
   NSString *clone = [userDefaults stringForKey:@"-clone"];
+  NSString *create = [userDefaults stringForKey:@"-create"];
+  NSString *delete = [userDefaults stringForKey:@"-delete"];
+  NSString *erase = [userDefaults stringForKey:@"-erase"];
+  NSString *list = [userDefaults stringForKey:@"-list"];
+  NSString *notify = [userDefaults stringForKey:@"-notify"];
+  NSString *recover = [userDefaults stringForKey:@"-recover"];
+  NSString *shutdown = [userDefaults stringForKey:@"-shutdown"];
+  NSString *udid = [userDefaults stringForKey:@"-udid"];
+  NSString *unrecover = [userDefaults stringForKey:@"-unrecover"];
 
   id<FBEventReporter> reporter = FBIDBConfiguration.eventReporter;
   if (udid) {
@@ -406,6 +449,12 @@ static FBFuture<FBFuture<NSNull *> *> *GetCompanionCompletedFuture(int argc, con
   } else if (clone) {
     [logger.info logFormat:@"Cloning %@", clone];
     return [FBFuture futureWithResult:CloneFuture(clone, userDefaults, logger, reporter)];
+  } else if (recover) {
+    [logger.info logFormat:@"Putting %@ into recovery", recover];
+    return [FBFuture futureWithResult:EnterRecoveryFuture(recover, logger)];
+  } else if (unrecover) {
+    [logger.info logFormat:@"Removing %@ from recovery", recover];
+    return [FBFuture futureWithResult:ExitRecoveryFuture(unrecover, logger)];
   }
   return [[[FBIDBError
     describeFormat:@"You must specify at least one 'Mode of operation'\n\n%s", kUsageHelpMessage]

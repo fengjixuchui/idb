@@ -7,7 +7,8 @@
 
 #import <Foundation/Foundation.h>
 
-#import "FBAMDevice+Private.h"
+#import <FBControlCore/FBControlCore.h>
+#import <FBDeviceControl/FBAMDefines.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -15,24 +16,9 @@ NS_ASSUME_NONNULL_BEGIN
 @class FBServiceConnectionClient;
 
 /**
- Wraps the AMDServiceConnection.
+ Abstract protocol for defining an interaction
  */
-@interface FBAMDServiceConnection : NSObject
-
-#pragma mark Initializers
-
-/**
- The Designated Initializer.
-
- @param connection the connection to use.
- @param device the device to use.
- @param calls the calls to use.
- @param logger the logger to use.
- @return a FBAMDServiceConnection instance.
- */
-- (instancetype)initWithServiceConnection:(AMDServiceConnectionRef)connection device:(AMDeviceRef)device calls:(AMDCalls)calls logger:(nullable id<FBControlCoreLogger>)logger;
-
-#pragma mark Raw Data
+@protocol FBAMDServiceConnectionTransfer <NSObject>
 
 /**
  Synchronously send bytes on the connection.
@@ -55,10 +41,53 @@ NS_ASSUME_NONNULL_BEGIN
 /**
  Synchronously receive bytes from the connection.
 
+ @param size the number of bytes to read.
  @param error an error out for any error that occurs.
  @return the data.
  */
 - (NSData *)receive:(size_t)size error:(NSError **)error;
+
+/**
+ Synchronously recieve bytes into a buffer.
+
+ @param destination the destination to write into.
+ @param size the number of bytes to read.
+ @param error an error out for any error that occurs.
+ @return YES if all bytes read, NO otherwise.
+ */
+- (BOOL)receive:(void *)destination ofSize:(size_t)size error:(NSError **)error;
+
+@end
+
+/**
+ Wraps the AMDServiceConnection.
+ */
+@interface FBAMDServiceConnection : NSObject
+
+#pragma mark Initializers
+
+/**
+ The Designated Initializer.
+
+ @param connection the connection to use.
+ @param device the device to use.
+ @param calls the calls to use.
+ @param logger the logger to use.
+ @return a FBAMDServiceConnection instance.
+ */
+- (instancetype)initWithServiceConnection:(AMDServiceConnectionRef)connection device:(AMDeviceRef)device calls:(AMDCalls)calls logger:(nullable id<FBControlCoreLogger>)logger;
+
+#pragma mark Raw Data
+
+/**
+ Obtains a transfer object for raw socket transfer.
+ */
+- (id<FBAMDServiceConnectionTransfer>)rawSocket;
+
+/**
+ Obtains a transfer object for a service-API based transfer.
+ */
+- (id<FBAMDServiceConnectionTransfer>)serviceConnectionWrapped;
 
 #pragma mark plist Messaging
 
@@ -167,7 +196,7 @@ NS_ASSUME_NONNULL_BEGIN
 /**
  The Secure IO Context.
  */
-@property (nonatomic, assign, readonly) BOOL secureIOContext;
+@property (nonatomic, assign, readonly) AMSecureIOContext secureIOContext;
 
 @end
 

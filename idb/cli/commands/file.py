@@ -6,10 +6,13 @@
 
 import json
 import os
+import sys
+import tempfile
 from abc import abstractmethod
 from argparse import ArgumentParser, Namespace
 from typing import Any, List, NamedTuple, Optional, Tuple
 
+import aiofiles
 from idb.cli import ClientCommand
 from idb.common.types import IdbClient
 
@@ -253,58 +256,33 @@ class FSPullCommand(FSCommand):
         )
 
 
-class DeprecatedPushCommand(ClientCommand):
+class FSShowCommand(FSCommand):
     @property
     def description(self) -> str:
-        return "Copy file(s) from local machine to target"
+        return "Write the contents of a remote file to stdout"
 
     @property
     def name(self) -> str:
-        return "push"
+        return "show"
 
     def add_parser_arguments(self, parser: ArgumentParser) -> None:
         parser.add_argument(
-            "src_paths", help="Path of file(s) to copy to the target", nargs="+"
-        )
-        parser.add_argument(
-            "bundle_id", help="Bundle id of the app to contain these files", type=str
-        )
-        parser.add_argument(
-            "dest_path",
-            help=(
-                "Directory relative to the data container of the application\n"
-                "to copy the files into. Will be created if non-existent"
-            ),
-            type=str,
+            "src", help="Relatve Container source path", type=BundleWithPath.parse
         )
         super().add_parser_arguments(parser)
 
-    async def run_with_client(self, args: Namespace, client: IdbClient) -> None:
-        self.logger.warning("'push' is deprecated, please use 'file push' instead")
-        return await FSPushCommand().run_with_bundle(
-            bundle_id=args.bundle_id, args=args, client=client
-        )
-
-
-class DeprecatedPullCommand(ClientCommand):
-    @property
-    def description(self) -> str:
-        return "Copy a file inside an application's container"
-
-    @property
-    def name(self) -> str:
-        return "pull"
-
-    def add_parser_arguments(self, parser: ArgumentParser) -> None:
-        parser.add_argument(
-            "bundle_id", help="Bundle id of the app to contain these files", type=str
-        )
-        parser.add_argument("src", help="Relativer Container source path", type=str)
-        parser.add_argument("dst", help="Local destination path", type=str)
-        super().add_parser_arguments(parser)
-
-    async def run_with_client(self, args: Namespace, client: IdbClient) -> None:
-        self.logger.warning("'pull' is deprecated, please use 'file pull' instead")
-        return await FSPullCommand().run_with_bundle(
-            bundle_id=args.bundle_id, args=args, client=client
-        )
+    async def run_with_bundle(
+        self, bundle_id: Optional[str], args: Namespace, client: IdbClient
+    ) -> None:
+        with tempfile.TemporaryDirectory() as destination_directory:
+            # Remove the tempfile so that it can be written to.
+            destination_directory = os.path.abspath(destination_directory)
+            destination_file = os.path.join(
+                destination_directory, os.path.basename(args.src)
+            )
+            await client.pull(
+                bundle_id=bundle_id, src_path=args.src, dest_path=destination_directory
+            )
+            async with aiofiles.open(destination_file, "rb") as f:
+                data = await f.read()
+                sys.stdout.buffer.write(data)

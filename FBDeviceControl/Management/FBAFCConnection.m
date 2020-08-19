@@ -47,16 +47,29 @@ static void AFCConnectionCallback(void *connectionRefPtr, void *arg1, void *afcO
 
 + (FBFutureContext<FBAFCConnection *> *)afcFromServiceConnection:(FBAMDServiceConnection *)serviceConnection calls:(AFCCalls)calls logger:(id<FBControlCoreLogger>)logger queue:(dispatch_queue_t)queue
 {
-  AFCConnectionRef afcConnection = calls.Create(
-    0x0,
-    serviceConnection.socket,
-    0x0,
-    AFCConnectionCallback,
-    0x0
-  );
-  FBAFCConnection *connection = [[FBAFCConnection alloc] initWithConnection:afcConnection calls:calls logger:logger];
-  return [[FBFuture futureWithResult:connection]
-    onQueue:queue contextualTeardown:^(id _, FBFutureState __) {
+  return [[FBFuture
+    onQueue:queue resolve:^{
+      AFCConnectionRef afcConnection = calls.Create(
+        0x0,
+        serviceConnection.socket,
+        0x0,
+        AFCConnectionCallback,
+        0x0
+      );
+      // We need to apply the Secure Context if it's present on the service connection.
+      AMSecureIOContext secureIOContext = serviceConnection.secureIOContext;
+      if (secureIOContext != NULL) {
+        calls.SetSecureContext(afcConnection, secureIOContext);
+      }
+      FBAFCConnection *connection = [[FBAFCConnection alloc] initWithConnection:afcConnection calls:calls logger:logger];
+      if (![connection connectionIsValid]) {
+        return [[FBDeviceControlError
+          describeFormat:@"Connection is not valid"]
+          failFuture];
+      }
+      return [FBFuture futureWithResult:connection];
+    }]
+    onQueue:queue contextualTeardown:^(FBAFCConnection *connection, FBFutureState __) {
       [connection closeWithError:nil];
       return FBFuture.empty;
     }];
@@ -353,11 +366,17 @@ const char *DoubleDot = "..";
 
 #pragma mark Private
 
+- (BOOL)connectionIsValid
+{
+  return self.calls.ConnectionIsValid(self.connection);
+}
+
 + (void)populateCallsFromMobileDevice:(AFCCalls *)calls
 {
   void *handle = [[NSBundle bundleWithIdentifier:@"com.apple.mobiledevice"] dlopenExecutablePath];
   calls->ConnectionClose = FBGetSymbolFromHandle(handle, "AFCConnectionClose");
   calls->ConnectionCopyLastErrorInfo = FBGetSymbolFromHandle(handle, "AFCConnectionCopyLastErrorInfo");
+  calls->ConnectionIsValid = FBGetSymbolFromHandle(handle, "AFCConnectionIsValid");
   calls->ConnectionOpen = FBGetSymbolFromHandle(handle, "AFCConnectionOpen");
   calls->ConnectionProcessOperation = FBGetSymbolFromHandle(handle, "AFCConnectionProcessOperation");
   calls->Create = FBGetSymbolFromHandle(handle, "AFCConnectionCreate");

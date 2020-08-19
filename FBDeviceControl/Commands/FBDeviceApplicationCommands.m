@@ -9,27 +9,25 @@
 
 #import <objc/runtime.h>
 
-#import "FBAMDevice+Private.h"
-#import "FBAMDevice.h"
 #import "FBAMDServiceConnection.h"
 #import "FBDevice+Private.h"
 #import "FBDevice.h"
-#import "FBDeviceApplicationLaunchStrategy.h"
 #import "FBDeviceApplicationProcess.h"
 #import "FBDeviceControlError.h"
 #import "FBDeviceDebuggerCommands.h"
+#import "FBInstrumentsClient.h"
 
-static void UninstallCallback(NSDictionary<NSString *, id> *callbackDictionary, FBAMDevice *device)
+static void UninstallCallback(NSDictionary<NSString *, id> *callbackDictionary, id<FBDeviceCommands> device)
 {
   [device.logger logFormat:@"Uninstall Progress: %@", [FBCollectionInformation oneLineDescriptionFromDictionary:callbackDictionary]];
 }
 
-static void InstallCallback(NSDictionary<NSString *, id> *callbackDictionary, FBAMDevice *device)
+static void InstallCallback(NSDictionary<NSString *, id> *callbackDictionary, id<FBDeviceCommands> device)
 {
   [device.logger logFormat:@"Install Progress: %@", [FBCollectionInformation oneLineDescriptionFromDictionary:callbackDictionary]];
 }
 
-static void TransferCallback(NSDictionary<NSString *, id> *callbackDictionary, FBAMDevice *device)
+static void TransferCallback(NSDictionary<NSString *, id> *callbackDictionary, id<FBDeviceCommands> device)
 {
   [device.logger logFormat:@"Transfer Progress: %@", [FBCollectionInformation oneLineDescriptionFromDictionary:callbackDictionary]];
 }
@@ -37,6 +35,45 @@ static void TransferCallback(NSDictionary<NSString *, id> *callbackDictionary, F
 @interface FBDeviceApplicationCommands ()
 
 @property (nonatomic, weak, readonly) FBDevice *device;
+
+- (FBFuture<NSNull *> *)killApplicationWithProcessIdentifier:(pid_t)processIdentifier;
+
+@end
+
+@interface FBDeviceLaunchedApplication : NSObject <FBLaunchedProcess>
+
+@property (nonatomic, strong, readonly) FBDeviceApplicationCommands *commands;
+@property (nonatomic, strong, readonly) dispatch_queue_t queue;
+
+@end
+
+@implementation FBDeviceLaunchedApplication
+
+@synthesize processIdentifier = _processIdentifier;
+
+- (instancetype)initWithProcessIdentifier:(pid_t)processIdentifier commands:(FBDeviceApplicationCommands *)commands queue:(dispatch_queue_t)queue
+{
+  self = [super init];
+  if (!self) {
+    return nil;
+  }
+
+  _processIdentifier = processIdentifier;
+  _commands = commands;
+  _queue = queue;
+
+  return self;
+}
+
+- (FBFuture<NSNull *> *)exitCode
+{
+  FBDeviceApplicationCommands *commands = self.commands;
+  pid_t processIdentifier = self.processIdentifier;
+  return [FBMutableFuture.future
+    onQueue:self.queue respondToCancellation:^ FBFuture<NSNull *> *{
+      return [commands killApplicationWithProcessIdentifier:processIdentifier];
+    }];
+}
 
 @end
 
@@ -83,11 +120,11 @@ static void TransferCallback(NSDictionary<NSString *, id> *callbackDictionary, F
   // the app is installed first (FB_AMDeviceLookupApplications)
   return [[self.device
     connectToDeviceWithPurpose:@"uninstall_%@", bundleID]
-    onQueue:self.device.workQueue pop:^ FBFuture<NSNull *> * (FBAMDevice *device) {
+    onQueue:self.device.workQueue pop:^ FBFuture<NSNull *> * (id<FBDeviceCommands> device) {
       [self.device.logger logFormat:@"Uninstalling Application %@", bundleID];
       int status = device.calls.SecureUninstallApplication(
         0,
-        device.amDevice,
+        device.amDeviceRef,
         (__bridge CFStringRef _Nonnull)(bundleID),
         0,
         (AMDeviceProgressCallback) UninstallCallback,
@@ -138,10 +175,32 @@ static void TransferCallback(NSDictionary<NSString *, id> *callbackDictionary, F
    }];
 }
 
-- (FBFuture<NSDictionary<NSString *, FBProcessInfo *> *> *)runningApplications
+- (FBFuture<NSDictionary<NSString *, NSNumber *> *> *)runningApplications
 {
-  // TODO: This is unimplemented, yet. Adding "empty" implementation so that it will not crash on selector forwarding
-  return [FBFuture futureWithResult:@{}];
+  return [[FBFuture
+    futureWithFutures:@[
+      [self runningProcessNameToPID],
+      [self installedApplicationsData:FBDeviceApplicationCommands.namingLookupAttributes],
+    ]]
+    onQueue:self.device.asyncQueue map:^ NSDictionary<NSString *, NSNumber *> * (NSArray<id> *tuple) {
+      NSDictionary<NSString *, NSNumber *> *runningProcessNameToPID = tuple[0];
+      NSDictionary<NSString *, id> *bundleIdentifierToAttributes = tuple[1];
+      NSMutableDictionary<NSString *, NSString *> *bundleNameToBundleIdentifier = NSMutableDictionary.dictionary;
+      for (NSString *bundleIdentifier in bundleIdentifierToAttributes.allKeys) {
+        NSString *bundleName = bundleIdentifierToAttributes[bundleIdentifier][FBApplicationInstallInfoKeyBundleName];
+        bundleNameToBundleIdentifier[bundleName] = bundleIdentifier;
+      }
+      NSMutableDictionary<NSString *, NSNumber *> *bundleNameToPID = NSMutableDictionary.dictionary;
+      for (NSString *processName in runningProcessNameToPID.allKeys) {
+        NSString *bundleName = bundleNameToBundleIdentifier[processName];
+        if (!bundleName) {
+          continue;
+        }
+        NSNumber *pid = runningProcessNameToPID[processName];
+        bundleNameToPID[bundleName] = pid;
+      }
+      return bundleNameToPID;
+    }];
 }
 
 - (FBFuture<NSNumber *> *)isApplicationInstalledWithBundleID:(NSString *)bundleID
@@ -153,48 +212,61 @@ static void TransferCallback(NSDictionary<NSString *, id> *callbackDictionary, F
     }];
 }
 
-- (FBFuture<id> *)processIDWithBundleID:(NSString *)bundleID
+- (FBFuture<NSNumber *> *)processIDWithBundleID:(NSString *)bundleID
 {
-  return [[FBDeviceControlError
-    describeFormat:@"-[%@ %@] is unimplemented", NSStringFromClass(self.class), NSStringFromSelector(_cmd)]
-    failFuture];
+  return [[self
+    runningApplications]
+    onQueue:self.device.asyncQueue fmap:^(NSDictionary<NSString *, NSNumber *> *result) {
+      NSNumber *pid = result[bundleID];
+      if (!pid) {
+        return [[FBDeviceControlError
+          describeFormat:@"No pid for %@", bundleID]
+          failFuture];
+      }
+      return [FBFuture futureWithResult:pid];
+    }];
 }
 
 - (FBFuture<NSNull *> *)killApplicationWithBundleID:(NSString *)bundleID
 {
-  return [[FBDeviceControlError
-    describeFormat:@"-[%@ %@] is unimplemented", NSStringFromClass(self.class), NSStringFromSelector(_cmd)]
-    failFuture];
+  return [[self
+    processIDWithBundleID:bundleID]
+    onQueue:self.device.workQueue fmap:^(NSNumber *processIdentifier) {
+      return [self killApplicationWithProcessIdentifier:processIdentifier.intValue];
+    }];
 }
 
 - (FBFuture<id<FBLaunchedProcess>> *)launchApplication:(FBApplicationLaunchConfiguration *)configuration
 {
-  __block NSString *remoteAppPath = nil;
   return [[[self
-    launchableRemoteApplicationPathForConfiguration:configuration]
-    onQueue:self.device.workQueue pushTeardown:^(NSString *result) {
-      remoteAppPath = result;
-      return [[FBDeviceDebuggerCommands
-        commandsWithTarget:self.device]
-        connectToDebugServer];
+    remoteInstrumentsClient]
+    onQueue:self.device.asyncQueue pop:^(FBInstrumentsClient *client) {
+      return [client launchApplication:configuration];
     }]
-    onQueue:self.device.workQueue pop:^(FBAMDServiceConnection *connection) {
-      return [[FBDeviceApplicationLaunchStrategy
-        strategyWithDevice:self.device debugConnection:connection logger:self.device.logger]
-        launchApplication:configuration remoteAppPath:remoteAppPath];
+    onQueue:self.device.asyncQueue map:^ id<FBLaunchedProcess> (NSNumber *pid) {
+      return [[FBDeviceLaunchedApplication alloc] initWithProcessIdentifier:pid.intValue commands:self queue:self.device.workQueue];
     }];
 }
 
 #pragma mark Private
 
+- (FBFuture<NSNull *> *)killApplicationWithProcessIdentifier:(pid_t)processIdentifier
+{
+  return [[self
+    remoteInstrumentsClient]
+    onQueue:self.device.asyncQueue pop:^(FBInstrumentsClient *client) {
+      return [client killProcess:processIdentifier];
+    }];
+}
+
 - (FBFuture<NSNull *> *)transferAppURL:(NSURL *)appURL options:(NSDictionary *)options
 {
   return [[self.device
     connectToDeviceWithPurpose:@"transfer_app"]
-    onQueue:self.device.workQueue pop:^ FBFuture<NSNull *> * (FBAMDevice *device) {
+    onQueue:self.device.workQueue pop:^ FBFuture<NSNull *> * (id<FBDeviceCommands> device) {
       int status = self.device.calls.SecureTransferPath(
         0,
-        device.amDevice,
+        device.amDeviceRef,
         (__bridge CFURLRef _Nonnull)(appURL),
         (__bridge CFDictionaryRef _Nonnull)(options),
         (AMDeviceProgressCallback) TransferCallback,
@@ -214,11 +286,11 @@ static void TransferCallback(NSDictionary<NSString *, id> *callbackDictionary, F
 {
   return [[self.device
     connectToDeviceWithPurpose:@"install"]
-    onQueue:self.device.workQueue pop:^ FBFuture<NSNull *> * (FBAMDevice *device) {
+    onQueue:self.device.workQueue pop:^ FBFuture<NSNull *> * (id<FBDeviceCommands> device) {
       [self.device.logger logFormat:@"Installing Application %@", appURL];
       int status = device.calls.SecureInstallApplication(
         0,
-        device.amDevice,
+        device.amDeviceRef,
         (__bridge CFURLRef _Nonnull)(appURL),
         (__bridge CFDictionaryRef _Nonnull)(options),
         (AMDeviceProgressCallback) InstallCallback,
@@ -239,13 +311,13 @@ static void TransferCallback(NSDictionary<NSString *, id> *callbackDictionary, F
 {
   return [[self.device
     connectToDeviceWithPurpose:@"installed_apps"]
-    onQueue:self.device.workQueue pop:^ FBFuture<NSDictionary<NSString *, NSDictionary<NSString *, id> *> *> * (FBAMDevice *device) {
+    onQueue:self.device.workQueue pop:^ FBFuture<NSDictionary<NSString *, NSDictionary<NSString *, id> *> *> * (id<FBDeviceCommands> device) {
       NSDictionary<NSString *, id> *options = @{
         @"ReturnAttributes": returnAttributes,
       };
       CFDictionaryRef applications;
       int status = device.calls.LookupApplications(
-        device.amDevice,
+        device.amDeviceRef,
         (__bridge CFDictionaryRef _Nullable)(options),
         &applications
       );
@@ -259,17 +331,24 @@ static void TransferCallback(NSDictionary<NSString *, id> *callbackDictionary, F
     }];
 }
 
-- (FBFuture<NSString *> *)launchableRemoteApplicationPathForConfiguration:(FBApplicationLaunchConfiguration *)configuration
+- (FBFutureContext<FBInstrumentsClient *> *)remoteInstrumentsClient
+{
+  return [[[self.device
+    mountDeveloperDiskImage]
+    onQueue:self.device.workQueue pushTeardown:^(id _) {
+      return [self.device startService:@"com.apple.instruments.remoteserver"];
+    }]
+    onQueue:self.device.asyncQueue pend:^(FBAMDServiceConnection *connection) {
+      return [FBInstrumentsClient instrumentsClientWithServiceConnection:connection logger:self.device.logger];
+    }];
+}
+
+- (FBFuture<NSDictionary<NSString *, NSNumber *> *> *)runningProcessNameToPID
 {
   return [[self
-    installedApplicationWithBundleID:configuration.bundleID]
-    onQueue:self.device.workQueue fmap:^(FBInstalledApplication *installedApplication) {
-      if (installedApplication.installType != FBApplicationInstallTypeUserDevelopment) {
-        return [[FBDeviceControlError
-          describeFormat:@"Application %@ cannot be launched as it's not signed with a development identity", installedApplication]
-          failFuture];
-      }
-      return [FBFuture futureWithResult:installedApplication.bundle.path];
+    remoteInstrumentsClient]
+    onQueue:self.device.asyncQueue pop:^(FBInstrumentsClient *client) {
+      return [client runningApplications];
     }];
 }
 
@@ -300,6 +379,19 @@ static void TransferCallback(NSDictionary<NSString *, id> *callbackDictionary, F
       FBApplicationInstallInfoKeyBundleName,
       FBApplicationInstallInfoKeyPath,
       FBApplicationInstallInfoKeySignerIdentity,
+    ];
+  });
+  return lookupAttributes;
+}
+
++ (NSArray<NSString *> *)namingLookupAttributes
+{
+  static dispatch_once_t onceToken;
+  static NSArray<NSString *> *lookupAttributes = nil;
+  dispatch_once(&onceToken, ^{
+    lookupAttributes = @[
+      FBApplicationInstallInfoKeyBundleIdentifier,
+      FBApplicationInstallInfoKeyBundleName,
     ];
   });
   return lookupAttributes;

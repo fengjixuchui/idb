@@ -15,7 +15,7 @@ NS_ASSUME_NONNULL_BEGIN
  File Commands related to a single target.
  This can be app or host-centric.
  */
-@protocol FBiOSTargetFileCommands <NSObject>
+@protocol FBFileContainer <NSObject>
 
 /**
  Copy items to from the host, to the target.
@@ -68,28 +68,6 @@ NS_ASSUME_NONNULL_BEGIN
  @return A future containing the list of entries that resolves when successful.
  */
 - (FBFuture<NSArray<NSString *> *> *)contentsOfDirectory:(NSString *)path;
-
-@end
-
-/**
- Defines an interface for interacting with the Data Container of Applications.
- */
-@protocol FBApplicationDataCommands <NSObject, FBiOSTargetCommand>
-
-/**
- Returns file commands for the given bundle id sandbox.
-
- @param bundleID the bundle ID of the container application.
- @return a Future that resolves with an instance of the file commands
- */
-- (id<FBiOSTargetFileCommands>)fileCommandsForContainerApplication:(NSString *)bundleID;
-
-/**
- Returns file for the root of the filesystem
-
- @return a Future that resolves with an instance of the file commands
- */
-- (id<FBiOSTargetFileCommands>)fileCommandsForRootFilesystem;
 
 @end
 

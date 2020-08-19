@@ -5,39 +5,31 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-#import "FBDeviceApplicationDataCommands.h"
+#import "FBDeviceFileCommands.h"
 
-#import "FBAMDevice.h"
-#import "FBAMDevice+Private.h"
 #import "FBDevice.h"
 #import "FBDevice+Private.h"
 #import "FBDeviceControlError.h"
 #import "FBAFCConnection.h"
 
-@interface FBDeviceFileCommands : NSObject <FBiOSTargetFileCommands>
+@interface FBDeviceFileContainer ()
 
-@property (nonatomic, strong, readonly) FBDevice *device;
-@property (nonatomic, assign, readonly) AFCCalls afcCalls;
-
-@end
-
-@interface FBDeviceFileCommands_HouseArrest : FBDeviceFileCommands
-
-@property (nonatomic, copy, readonly) NSString *bundleID;
+@property (nonatomic, strong, readonly) dispatch_queue_t queue;
+@property (nonatomic, strong, readonly) FBAFCConnection *connection;
 
 @end
 
-@implementation FBDeviceFileCommands
+@implementation FBDeviceFileContainer
 
-- (instancetype)initWithDevice:(FBDevice *)device afcCalls:(AFCCalls)afcCalls
+- (instancetype)initWithAFCConnection:(FBAFCConnection *)connection queue:(dispatch_queue_t)queue
 {
   self = [super init];
   if (!self) {
     return nil;
   }
 
-  _device = device;
-  _afcCalls = afcCalls;
+  _connection = connection;
+  _queue = queue;
 
   return self;
 }
@@ -59,7 +51,7 @@
 {
   return [[self
     readFileFromPathInContainer:containerPath]
-    onQueue:self.device.asyncQueue fmap:^FBFuture<NSString *> *(NSData *fileData) {
+    onQueue:self.queue fmap:^FBFuture<NSString *> *(NSData *fileData) {
      NSError *error;
      if (![fileData writeToFile:destinationPath options:0 error:&error]) {
        return [[[FBDeviceControlError
@@ -114,7 +106,6 @@
   return [self handleAFCOperation:^ NSArray<NSString *> * (FBAFCConnection *afc, NSError **error) {
     return [afc contentsOfDirectory:path error:error];
   }];
-
 }
 
 #pragma mark Private
@@ -128,58 +119,22 @@
 
 - (FBFuture *)handleAFCOperation:(id(^)(FBAFCConnection *, NSError **))operationBlock
 {
-  return [[self.device
-    startAFCService:@"com.apple.afc"]
-    onQueue:self.device.workQueue pop:^(FBAFCConnection *connection) {
-      NSError *error = nil;
-      id result = operationBlock(connection, &error);
-      if (!result) {
-        return [FBFuture futureWithError:error];
-      }
-      return [FBFuture futureWithResult:result];
-    }];
+  return [FBFuture
+  onQueue:self.queue resolveValue:^(NSError **error) {
+      return operationBlock(self.connection, error);
+  }];
 }
 
 @end
 
-@implementation FBDeviceFileCommands_HouseArrest
-
-- (instancetype)initWithDevice:(FBDevice *)device afcCalls:(AFCCalls)afcCalls bundleID:(NSString *)bundleID
-{
-  self = [super initWithDevice:device afcCalls:afcCalls];
-  if (!self) {
-    return nil;
-  }
-
-  _bundleID = bundleID;
-
-  return self;
-}
-
-- (FBFuture *)handleAFCOperation:(id(^)(FBAFCConnection *, NSError **))operationBlock
-{
-  return [[self.device
-    houseArrestAFCConnectionForBundleID:self.bundleID afcCalls:self.afcCalls]
-    onQueue:self.device.workQueue pop:^(FBAFCConnection *connection) {
-      NSError *error = nil;
-      id result = operationBlock(connection, &error);
-      if (!result) {
-        return [FBFuture futureWithError:error];
-      }
-      return [FBFuture futureWithResult:result];
-    }];
-}
-
-@end
-
-@interface FBDeviceApplicationDataCommands ()
+@interface FBDeviceFileCommands ()
 
 @property (nonatomic, strong, readonly) FBDevice *device;
 @property (nonatomic, assign, readonly) AFCCalls afcCalls;
 
 @end
 
-@implementation FBDeviceApplicationDataCommands
+@implementation FBDeviceFileCommands
 
 #pragma mark Initializers
 
@@ -206,16 +161,31 @@
   return self;
 }
 
-#pragma mark FBApplicationDataCommands
+#pragma mark FBFileCommands
 
-- (id<FBiOSTargetFileCommands>)fileCommandsForContainerApplication:(NSString *)bundleID
+- (FBFutureContext<id<FBFileContainer>> *)fileCommandsForContainerApplication:(NSString *)bundleID
 {
-  return [[FBDeviceFileCommands_HouseArrest alloc] initWithDevice:self.device afcCalls:self.afcCalls bundleID:bundleID];
+  return [[self.device
+    houseArrestAFCConnectionForBundleID:bundleID afcCalls:self.afcCalls]
+    onQueue:self.device.asyncQueue pend:^ FBFuture<id<FBFileContainer>> * (FBAFCConnection *connection) {
+      return [FBFuture futureWithResult:[[FBDeviceFileContainer alloc] initWithAFCConnection:connection queue:self.device.asyncQueue]];
+    }];
 }
 
-- (id<FBiOSTargetFileCommands>)fileCommandsForRootFilesystem
+- (FBFutureContext<id<FBFileContainer>> *)fileCommandsForRootFilesystem
 {
-  return [[FBDeviceFileCommands alloc] initWithDevice:self.device afcCalls:self.afcCalls];
+  return [[FBControlCoreError
+    describeFormat:@"%@ not supported on devices, requires a rooted device", NSStringFromSelector(_cmd)]
+    failFutureContext];
+}
+
+- (FBFutureContext<id<FBFileContainer>> *)fileCommandsForMediaDirectory
+{
+  return [[self.device
+    startAFCService:@"com.apple.afc"]
+    onQueue:self.device.asyncQueue pend:^ FBFuture<id<FBFileContainer>> * (FBAFCConnection *connection) {
+      return [FBFuture futureWithResult:[[FBDeviceFileContainer alloc] initWithAFCConnection:connection queue:self.device.asyncQueue]];
+    }];
 }
 
 @end

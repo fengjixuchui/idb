@@ -35,6 +35,16 @@ typedef CFTypeRef AFCOperationRef;
 typedef CFTypeRef AMRestorableDeviceRef;
 
 /**
+ An Alias for the "Recovery Mode Device"
+ */
+typedef CFTypeRef AMRecoveryModeDeviceRef;
+
+/**
+ An Alias for a "Secure IO Context"
+ */
+typedef void * AMSecureIOContext;
+
+/**
  An opaque handle to a notification subscription.
  */
 typedef void *AMDNotificationSubscription;
@@ -137,7 +147,13 @@ typedef struct {
   int (*ServiceConnectionReceiveMessage)(CFTypeRef connection, CFPropertyListRef *messageOut, CFPropertyListFormat *formatOut, void *unknown0, void *unknown1, void *unknown2);
   ssize_t (*ServiceConnectionSend)(CFTypeRef connection, const void *buffer, size_t bytes);
   int (*ServiceConnectionSendMessage)(CFTypeRef connection, CFPropertyListRef propertyList, CFPropertyListFormat format, void *unknown0, CFDictionaryKeyCallBacks *keyCallbacks, CFDictionaryValueCallBacks *valueCallbacks);
-  int (*ServiceConnectionGetSecureIOContext)(CFTypeRef connection);
+  AMSecureIOContext (*ServiceConnectionGetSecureIOContext)(CFTypeRef connection);
+
+  // Managing device recovery.
+  int (*EnterRecovery)(AMDeviceRef device);
+  AMRecoveryModeDeviceRef (*RestorableDeviceGetRecoveryModeDevice)(AMRestorableDeviceRef device);
+  int (*RecoveryModeDeviceSetAutoBoot)(AMRecoveryModeDeviceRef device, int enableAutoBoot);
+  int (*RecoveryDeviceReboot)(AMRecoveryModeDeviceRef device);
 
   // Services
   int (*SecureStartService)(AMDeviceRef device, CFStringRef service_name, _Nullable CFDictionaryRef userinfo, CFTypeRef *serviceOut);
@@ -179,9 +195,10 @@ typedef struct {
 typedef struct {
   // Creating a Connection
   AFCConnectionRef (*Create)(void *_Nullable unknown0, int socket, void *_Nullable unknown1, AFCNotificationCallback callback, void *_Nullable unknown3);
-  int (*ConnectionOpen)(CFTypeRef handle, uint32_t io_timeout,CFTypeRef _Nullable *_Nullable conn);
+  int (*ConnectionOpen)(CFTypeRef handle, uint32_t io_timeout, CFTypeRef _Nullable *_Nullable conn);
   int (*ConnectionClose)(AFCConnectionRef connection);
-  int (*SetSecureContext)(CFTypeRef connection);
+  int (*ConnectionIsValid)(AFCConnectionRef connection);
+  void (*SetSecureContext)(AFCConnectionRef connection, AMSecureIOContext ioContext);
 
   // Individual Operations
   int (*DirectoryOpen)(AFCConnectionRef connection, const char *path, CFTypeRef _Nullable * _Nullable dir);

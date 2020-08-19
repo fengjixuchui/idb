@@ -27,7 +27,7 @@
 #import <FBSimulatorControl/FBSimulatorAgentCommands.h>
 #import <FBSimulatorControl/FBSimulatorAgentOperation.h>
 #import <FBSimulatorControl/FBSimulatorApplicationCommands.h>
-#import <FBSimulatorControl/FBSimulatorApplicationDataCommands.h>
+#import <FBSimulatorControl/FBSimulatorFileCommands.h>
 #import <FBSimulatorControl/FBSimulatorApplicationOperation.h>
 #import <FBSimulatorControl/FBSimulatorBitmapStream.h>
 #import <FBSimulatorControl/FBSimulatorBootConfiguration.h>
@@ -54,7 +54,6 @@
 #import <FBSimulatorControl/FBSimulatorLoggingEventSink.h>
 #import <FBSimulatorControl/FBSimulatorMediaCommands.h>
 #import <FBSimulatorControl/FBSimulatorMutableState.h>
-#import <FBSimulatorControl/FBSimulatorNotificationEventSink.h>
 #import <FBSimulatorControl/FBSimulatorPredicates.h>
 #import <FBSimulatorControl/FBSimulatorProcessFetcher.h>
 #import <FBSimulatorControl/FBSimulatorScreenshotCommands.h>

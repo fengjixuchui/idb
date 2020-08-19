@@ -44,6 +44,11 @@
 
 + (NSString *)setPathForWorkingDirectory:(NSString *)workingDirectory logger:(id<FBControlCoreLogger>)logger
 {
+  NSOperatingSystemVersion xcodeVersion = FBXcodeConfiguration.xcodeVersion;
+  if (xcodeVersion.majorVersion == 11 && xcodeVersion.minorVersion >= 5) {
+    [logger logFormat:@"CoreSimulatorService can wedge with custom sets in Xcode %@, using the default set", FBXcodeConfiguration.xcodeVersionNumber];
+    return nil;
+  }
   NSString *fallbackSetPath = [workingDirectory stringByAppendingPathComponent:@"sim"];
   NSString *xctestDevicesSet = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Developer/XCTestDevices"];
   BOOL isDirectory = NO;

@@ -8,6 +8,7 @@
 #import "FBIDBCommandExecutor.h"
 
 #import <FBSimulatorControl/FBSimulatorControl.h>
+#import <FBDeviceControl/FBDeviceControl.h>
 
 #import "FBIDBStorageManager.h"
 #import "FBIDBError.h"
@@ -134,7 +135,7 @@
 {
   return [[self
     applicationDataContainerCommands:bundleID]
-    onQueue:self.target.workQueue fmap:^(id<FBiOSTargetFileCommands> targetApplicationData) {
+    onQueue:self.target.workQueue pop:^(id<FBFileContainer> targetApplicationData) {
       return [targetApplicationData createDirectory:directoryPath];
     }];
 }
@@ -143,7 +144,7 @@
 {
   return [[self
     accessibilityCommands]
-    onQueue:self.target.workQueue fmap:^ FBFuture * (id<FBSimulatorAccessibilityCommands> commands) {
+    onQueue:self.target.workQueue fmap:^ FBFuture * (id<FBAccessibilityCommands> commands) {
       if (value) {
         return [commands accessibilityElementAtPoint:value.pointValue nestedFormat:nestedFormat];
       } else {
@@ -164,7 +165,7 @@
 {
   return [[self
     applicationDataContainerCommands:bundleID]
-    onQueue:self.target.workQueue fmap:^(id<FBiOSTargetFileCommands> commands) {
+    onQueue:self.target.workQueue pop:^(id<FBFileContainer> commands) {
       return [commands movePaths:originPaths toDestinationPath:destinationPath];
     }];
 }
@@ -189,7 +190,7 @@
     onQueue:self.target.asyncQueue resolve:^FBFuture<NSNull *> *{
       return [[self
         applicationDataContainerCommands:bundleID]
-        onQueue:self.target.workQueue fmap:^FBFuture *(id<FBiOSTargetFileCommands> targetApplicationsData) {
+        onQueue:self.target.workQueue pop:^FBFuture *(id<FBFileContainer> targetApplicationsData) {
           return [targetApplicationsData copyPathsOnHost:paths toDestination:destinationPath];
         }];
   }];
@@ -199,7 +200,7 @@
 {
   return [[self
     applicationDataContainerCommands:bundleID]
-    onQueue:self.target.workQueue fmap:^FBFuture *(id<FBiOSTargetFileCommands> commands) {
+    onQueue:self.target.workQueue pop:^FBFuture *(id<FBFileContainer> commands) {
       return [commands copyItemInContainer:path toDestinationOnHost:destinationPath];
     }];
 }
@@ -208,14 +209,15 @@
 {
   __block NSString *tempPath;
 
-  return [[[[self.temporaryDirectory
+  return [[[self.temporaryDirectory
     withTemporaryDirectory]
     onQueue:self.target.workQueue pend:^(NSURL *url) {
       tempPath = [url.path stringByAppendingPathComponent:path.lastPathComponent];
-      return [self applicationDataContainerCommands:bundleID];
-    }]
-    onQueue:self.target.workQueue pend:^(id<FBiOSTargetFileCommands> commands) {
-      return [commands copyItemInContainer:path toDestinationOnHost:tempPath];
+      return [[self
+        applicationDataContainerCommands:bundleID]
+        onQueue:self.target.workQueue pop:^(id<FBFileContainer> container) {
+          return [container copyItemInContainer:path toDestinationOnHost:tempPath];
+        }];
     }]
     onQueue:self.target.workQueue pop:^(id _) {
       return [FBArchiveOperations createGzippedTarDataForPath:tempPath queue:self.target.workQueue logger:self.target.logger];
@@ -234,7 +236,7 @@
 {
   return [[self
     applicationDataContainerCommands:bundleID]
-    onQueue:self.target.workQueue fmap:^FBFuture *(id<FBiOSTargetFileCommands> commands) {
+    onQueue:self.target.workQueue pop:^FBFuture *(id<FBFileContainer> commands) {
       return [commands removePaths:paths];
     }];
 }
@@ -243,7 +245,7 @@
 {
   return [[self
     applicationDataContainerCommands:bundleID]
-    onQueue:self.target.workQueue fmap:^FBFuture *(id<FBiOSTargetFileCommands> commands) {
+    onQueue:self.target.workQueue pop:^FBFuture *(id<FBFileContainer> commands) {
       return [commands contentsOfDirectory:path];
     }];
 }
@@ -472,18 +474,18 @@ static const NSTimeInterval ListTestBundleTimeout = 60.0;
 
 #pragma mark Private Methods
 
-- (FBFuture<id<FBiOSTargetFileCommands>> *)applicationDataContainerCommands:(NSString *)bundleID
+- (FBFutureContext<id<FBFileContainer>> *)applicationDataContainerCommands:(NSString *)bundleID
 {
-  id<FBApplicationDataCommands> commands = (id<FBApplicationDataCommands>) self.target;
-  if (![commands conformsToProtocol:@protocol(FBApplicationDataCommands)]) {
+  id<FBFileCommands> commands = (id<FBFileCommands>) self.target;
+  if (![commands conformsToProtocol:@protocol(FBFileCommands)]) {
     return [[FBControlCoreError
       describeFormat:@"Target doesn't conform to FBApplicationDataCommands protocol %@", commands]
-      failFuture];
+      failFutureContext];
   }
   if (bundleID == nil || bundleID.length == 0) {
-    return [FBFuture futureWithResult:[commands fileCommandsForRootFilesystem]];
+    return [self.target isKindOfClass:FBDevice.class] ? [commands fileCommandsForMediaDirectory] : [commands fileCommandsForRootFilesystem];
   }
-  return [FBFuture futureWithResult:[commands fileCommandsForContainerApplication:bundleID]];
+  return [commands fileCommandsForContainerApplication:bundleID];
 }
 
 
@@ -542,12 +544,12 @@ static const NSTimeInterval ListTestBundleTimeout = 60.0;
   return [FBFuture futureWithResult:commands];
 }
 
-- (FBFuture<id<FBSimulatorAccessibilityCommands>> *)accessibilityCommands
+- (FBFuture<id<FBAccessibilityCommands>> *)accessibilityCommands
 {
-  id<FBSimulatorAccessibilityCommands> commands = (id<FBSimulatorAccessibilityCommands>) self.target;
-  if (![commands conformsToProtocol:@protocol(FBSimulatorSettingsCommands)]) {
+  id<FBAccessibilityCommands> commands = (id<FBAccessibilityCommands>) self.target;
+  if (![commands conformsToProtocol:@protocol(FBAccessibilityCommands)]) {
     return [[FBIDBError
-      describeFormat:@"Target doesn't conform to FBSimulatorAccessibilityCommands protocol %@", self.target]
+      describeFormat:@"Target doesn't conform to FBAccessibilityCommands protocol %@", self.target]
       failFuture];
   }
   return [FBFuture futureWithResult:commands];

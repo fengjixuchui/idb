@@ -7,13 +7,13 @@
 
 #import "FBDeviceCrashLogCommands.h"
 
-#import "FBDevice.h"
-#import "FBDevice+Private.h"
-#import "FBDeviceControlError.h"
-#import "FBAMDevice.h"
-#import "FBAMDevice+Private.h"
-#import "FBAMDServiceConnection.h"
 #import "FBAFCConnection.h"
+#import "FBAMDServiceConnection.h"
+#import "FBDevice+Private.h"
+#import "FBDevice.h"
+#import "FBDeviceApplicationCommands.h"
+#import "FBDeviceControlError.h"
+#import "FBDeviceFileCommands.h"
 
 @interface FBDeviceCrashLogCommands ()
 
@@ -78,6 +78,15 @@ static NSString *const PingSuccess = @"ping";
       NSArray<FBCrashLogInfo *> *pruned = [self.store pruneCrashLogsMatchingPredicate:predicate];
       [logger logFormat:@"Pruned %@ logs from local cache", [FBCollectionInformation oneLineDescriptionFromArray:[pruned valueForKeyPath:@"name"]]];
       return [self removeCrashLogsFromDevice:pruned logger:logger];
+    }];
+}
+
+- (FBFutureContext<id<FBFileContainer>> *)crashLogFiles
+{
+  return [[self
+    crashReportFileConnection]
+    onQueue:self.device.asyncQueue pend:^(FBAFCConnection *connection) {
+      return [FBFuture futureWithResult:[[FBDeviceFileContainer alloc] initWithAFCConnection:connection queue:self.device.asyncQueue]];
     }];
 }
 
@@ -160,7 +169,7 @@ static NSString *const PingSuccess = @"ping";
     // The mover is used first and can be discarded when done.
     onQueue:self.device.asyncQueue pop:^ FBFuture<NSString *> * (FBAMDServiceConnection *connection) {
       NSError *error = nil;
-      NSData *data = [connection receive:4 error:&error];
+      NSData *data = [connection.serviceConnectionWrapped receive:4 error:&error];
       if (!data) {
         return [[[FBDeviceControlError
           describeFormat:@"Failed to get pingback from %@", CrashReportMoverService]

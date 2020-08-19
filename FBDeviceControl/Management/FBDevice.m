@@ -15,7 +15,7 @@
 #import "FBAMDevice.h"
 #import "FBAMRestorableDevice.h"
 #import "FBDeviceApplicationCommands.h"
-#import "FBDeviceApplicationDataCommands.h"
+#import "FBDeviceFileCommands.h"
 #import "FBDeviceControlError.h"
 #import "FBDeviceCrashLogCommands.h"
 #import "FBDeviceDebuggerCommands.h"
@@ -143,36 +143,7 @@
   return [FBiOSTargetFormat.fullFormat extractFrom:self];
 }
 
-#pragma mark Public
-
-+ (NSOperatingSystemVersion)operatingSystemVersionFromString:(NSString *)string
-{
-  NSArray<NSString *> *components = [string componentsSeparatedByCharactersInSet:NSCharacterSet.punctuationCharacterSet];
-  NSOperatingSystemVersion version = {
-    .majorVersion = 0,
-    .minorVersion = 0,
-    .patchVersion = 0,
-  };
-  for (NSUInteger index = 0; index < components.count; index++) {
-    NSInteger value = components[index].integerValue;
-    switch (index) {
-      case 0:
-        version.majorVersion = value;
-        continue;
-      case 1:
-        version.minorVersion = value;
-        continue;
-      case 2:
-        version.patchVersion = value;
-        continue;
-      default:
-        continue;
-    }
-  }
-  return version;
-}
-
-#pragma mark FBDevice Properties
+#pragma mark FBDevice Class Properties
 
 - (void)setAmDevice:(FBAMDevice *)amDevice
 {
@@ -243,9 +214,29 @@
   }
 }
 
-#pragma mark FBDeviceCommands
+#pragma mark FBDevice Protocol Implementation
 
-- (FBFutureContext<FBAMDevice *> *)connectToDeviceWithPurpose:(NSString *)format, ...
+- (AMDeviceRef)amDeviceRef
+{
+  FBAMDevice *amDevice = self.amDevice;
+  if (!amDevice)  {
+    return NULL;
+  }
+  return amDevice.amDeviceRef;
+}
+
+- (AMRecoveryModeDeviceRef)recoveryModeDeviceRef
+{
+  FBAMRestorableDevice *restorableDevice = self.restorableDevice;
+  if (!restorableDevice) {
+    return NULL;
+  }
+  return restorableDevice.recoveryModeDeviceRef;
+}
+
+#pragma mark FBDeviceCommands Protocol Implementation
+
+- (FBFutureContext<id<FBDeviceCommands>> *)connectToDeviceWithPurpose:(NSString *)format, ...
 {
   FBAMDevice *amDevice = self.amDevice;
   if (amDevice) {
@@ -324,12 +315,13 @@
   dispatch_once(&onceToken, ^{
     commandClasses = @[
       FBDeviceApplicationCommands.class,
-      FBDeviceApplicationDataCommands.class,
+      FBDeviceFileCommands.class,
       FBDeviceCrashLogCommands.class,
       FBDeviceDebuggerCommands.class,
       FBDeviceDiagnosticInformationCommands.class,
       FBDeviceLocationCommands.class,
       FBDeviceLogCommands.class,
+      FBDeviceRecoveryCommands.class,
       FBDeviceScreenshotCommands.class,
       FBDeviceVideoRecordingCommands.class,
       FBDeviceXCTestCommands.class,
