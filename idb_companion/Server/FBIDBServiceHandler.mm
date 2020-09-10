@@ -230,7 +230,6 @@ static FBFutureContext<NSArray<NSURL *> *> *filepaths_from_reader(FBTemporaryDir
   }
 }
 
-
 static NSDictionary<NSString *, NSString *> *extract_str_dict(const ::google::protobuf::Map<::std::string, ::std::string >& iterator)
 {
   NSMutableDictionary<NSString *, NSString *> *environment = NSMutableDictionary.dictionary;
@@ -249,7 +248,6 @@ static NSArray<NSString *> *extract_string_array(T &input)
   }
   return arguments;
 }
-
 
 static FBXCTestRunRequest *convert_xctest_request(const idb::XctestRunRequest *request)
 {
@@ -421,6 +419,40 @@ static idb::TargetDescription description_of_target(id<FBiOSTarget> target)
   description.set_target_type(target.osVersion.name.UTF8String);
   description.set_target_type(target.architecture.UTF8String);
   return description;
+}
+
+static NSString *file_container(idb::FileContainer container, std::string bundleID)
+{
+  switch (container.kind()) {
+    case idb::FileContainer_Kind_APPLICATION:
+      return nsstring_from_c_string(container.bundle_id());
+    case idb::FileContainer_Kind_ROOT:
+      return FBFileContainerKindRoot;
+    case idb::FileContainer_Kind_MEDIA:
+      return FBFileContainerKindMedia;
+    case idb::FileContainer_Kind_CRASHES:
+      return FBFileContainerKindCrashes;
+    case idb::FileContainer_Kind_PROVISIONING_PROFILES:
+      return FBFileContainerKindProvisioningProfiles;
+    default:
+      break;
+  }
+  // Compatability cases, where we derive purely from the bundleID
+  if (bundleID.length() == 0) {
+    return nil;
+  }
+  return nsstring_from_c_string(bundleID);
+}
+
+static void populate_companion_info(idb::CompanionInfo *info, id<FBEventReporter> reporter, id<FBiOSTarget> target)
+{
+  info->set_udid(target.udid.UTF8String);
+  NSDictionary<NSString *, NSString *> *metadata = reporter.metadata ?: @{};
+  NSError *error = nil;
+  NSData *data = [NSJSONSerialization dataWithJSONObject:metadata options:0 error:&error];
+  if (data) {
+    info->set_metadata(data.bytes, data.length);
+  }
 }
 
 #pragma mark Constructors
@@ -624,7 +656,7 @@ Status FBIDBServiceHandler::uninstall(ServerContext *context, const idb::Uninsta
 Status FBIDBServiceHandler::mkdir(grpc::ServerContext *context, const idb::MkdirRequest *request, idb::MkdirResponse *response)
 {@autoreleasepool{
   NSError *error = nil;
-  [[_commandExecutor create_directory:nsstring_from_c_string(request->path()) in_container_of_application:nsstring_from_c_string(request->bundle_id())] block:&error];
+  [[_commandExecutor create_directory:nsstring_from_c_string(request->path()) containerType:file_container(request->container(), request->bundle_id())] block:&error];
   if (error) {
     return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
   }
@@ -638,7 +670,7 @@ Status FBIDBServiceHandler::mv(grpc::ServerContext *context, const idb::MvReques
   for (int j = 0; j < request->src_paths_size(); j++) {
     [originalPaths addObject:nsstring_from_c_string(request->src_paths(j))];
   }
-  [[_commandExecutor move_paths:originalPaths to_path:nsstring_from_c_string(request->dst_path()) in_container_of_application:nsstring_from_c_string(request->bundle_id())] block:&error];
+  [[_commandExecutor move_paths:originalPaths to_path:nsstring_from_c_string(request->dst_path()) containerType:file_container(request->container(), request->bundle_id())] block:&error];
   if (error) {
     return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
   }
@@ -652,7 +684,7 @@ Status FBIDBServiceHandler::rm(grpc::ServerContext *context, const idb::RmReques
   for (int j = 0; j < request->paths_size(); j++) {
     [paths addObject:nsstring_from_c_string(request->paths(j))];
   }
-  [[_commandExecutor remove_paths:paths in_container_of_application:nsstring_from_c_string(request->bundle_id())] block:&error];
+  [[_commandExecutor remove_paths:paths containerType:file_container(request->container(), request->bundle_id())] block:&error];
   if (error) {
     return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
   }
@@ -662,7 +694,7 @@ Status FBIDBServiceHandler::rm(grpc::ServerContext *context, const idb::RmReques
 Status FBIDBServiceHandler::ls(grpc::ServerContext *context, const idb::LsRequest *request, idb::LsResponse *response)
 {@autoreleasepool{
   NSError *error = nil;
-  NSArray<NSString *> *paths = [[_commandExecutor list_path:nsstring_from_c_string(request->path()) in_container_of_application:nsstring_from_c_string(request->bundle_id())] block:&error];
+  NSArray<NSString *> *paths = [[_commandExecutor list_path:nsstring_from_c_string(request->path()) containerType:file_container(request->container(), request->bundle_id())] block:&error];
   if (error) {
     return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
   }
@@ -999,7 +1031,7 @@ Status FBIDBServiceHandler::push(grpc::ServerContext *context, grpc::ServerReade
   const idb::PushRequest_Inner inner = request.inner();
 
   [[filepaths_from_reader(_commandExecutor.temporaryDirectory, reader, false, _target.logger) onQueue:_target.asyncQueue pop:^FBFuture<NSNull *> *(NSArray<NSURL *> *files) {
-    return [_commandExecutor push_files:files to_path:nsstring_from_c_string(inner.dst_path()) in_container_of_application:nsstring_from_c_string(inner.bundle_id())];
+    return [_commandExecutor push_files:files to_path:nsstring_from_c_string(inner.dst_path()) containerType:file_container(inner.container(), inner.bundle_id())];
   }] block:&error];
   if (error) {
     return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
@@ -1012,7 +1044,7 @@ Status FBIDBServiceHandler::pull(ServerContext *context, const ::idb::PullReques
   NSString *path = nsstring_from_c_string(request->src_path());
   NSError *error = nil;
   if (request->dst_path().length() > 0) {
-    NSString *filePath = [[_commandExecutor pull_file_path:path destination_path:nsstring_from_c_string(request->dst_path()) in_container_of_application:nsstring_from_c_string(request->bundle_id()) ] block:&error];
+    NSString *filePath = [[_commandExecutor pull_file_path:path destination_path:nsstring_from_c_string(request->dst_path()) containerType:file_container(request->container(), request->bundle_id()) ] block:&error];
     if (error) {
       return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
     }
@@ -1020,7 +1052,7 @@ Status FBIDBServiceHandler::pull(ServerContext *context, const ::idb::PullReques
   } else {
     NSURL *url = [_commandExecutor.temporaryDirectory temporaryDirectory];
     NSString *tempPath = [url.path stringByAppendingPathComponent:path.lastPathComponent];
-    NSString *filePath = [[_commandExecutor pull_file_path:path destination_path:tempPath in_container_of_application:nsstring_from_c_string(request->bundle_id())] block:&error];
+    NSString *filePath = [[_commandExecutor pull_file_path:path destination_path:tempPath containerType:file_container(request->container(), request->bundle_id())] block:&error];
     if (error) {
       return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
     }
@@ -1034,8 +1066,9 @@ Status FBIDBServiceHandler::pull(ServerContext *context, const ::idb::PullReques
 
 Status FBIDBServiceHandler::describe(ServerContext *context, const idb::TargetDescriptionRequest *request, idb::TargetDescriptionResponse *response)
 {@autoreleasepool{
-  FBiOSTargetScreenInfo *screenInfo = _target.screenInfo;
+  // Populate the default values
   idb::TargetDescription *description = response->mutable_target_description();
+  FBiOSTargetScreenInfo *screenInfo = _target.screenInfo;
   if (screenInfo) {
     idb::ScreenDimensions *dimensions = description->mutable_screen_dimensions();
     dimensions->set_width(screenInfo.widthPixels);
@@ -1050,6 +1083,8 @@ Status FBIDBServiceHandler::describe(ServerContext *context, const idb::TargetDe
   description->set_target_type(FBiOSTargetTypeStringsFromTargetType(_target.targetType).firstObject.lowercaseString.UTF8String);
   description->set_os_version(_target.osVersion.name.UTF8String);
   description->set_architecture(_target.architecture.UTF8String);
+
+  // Add extended information
   NSDictionary<NSString *, id> *extendedInformation = _target.extendedInformation;
   NSError *error = nil;
   NSData *data = [NSJSONSerialization dataWithJSONObject:extendedInformation options:0 error:&error];
@@ -1057,6 +1092,9 @@ Status FBIDBServiceHandler::describe(ServerContext *context, const idb::TargetDe
     return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
   }
   description->set_extended(data.bytes, data.length);
+
+  // Also attach the companion metadata
+  populate_companion_info(response->mutable_companion(), _eventReporter, _target);
 
   // Only fetch diagnostic information when requested.
   if (!request->fetch_diagnostics()) {
@@ -1071,6 +1109,7 @@ Status FBIDBServiceHandler::describe(ServerContext *context, const idb::TargetDe
     return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
   }
   description->set_diagnostics(data.bytes, data.length);
+
   return Status::OK;
 }}
 
@@ -1191,18 +1230,18 @@ Status FBIDBServiceHandler::debugserver(grpc::ServerContext *context, grpc::Serv
   }
 }}
 
-Status FBIDBServiceHandler::disconnect(grpc::ServerContext *context, const idb::DisconnectRequest *request, idb::DisconnectResponse *response)
-{@autoreleasepool{
-  return Status::OK;
-}}
-
 Status FBIDBServiceHandler::connect(grpc::ServerContext *context, const idb::ConnectRequest *request, idb::ConnectResponse *response)
 {@autoreleasepool{
+  // Add Meta to Reporter
   [_eventReporter addMetadata:extract_str_dict(request->metadata())];
 
+  // Get the local state
   BOOL isLocal = [NSFileManager.defaultManager fileExistsAtPath:nsstring_from_c_string(request->local_file_path())];
-  response->mutable_companion()->set_is_local(isLocal);
-  response->mutable_companion()->set_udid(_target.udid.UTF8String);
-  response->mutable_companion()->set_host(NSProcessInfo.processInfo.hostName.UTF8String);
+  idb::CompanionInfo *info = response->mutable_companion();
+  info->set_is_local(isLocal);
+
+  // Populate the other values.
+  populate_companion_info(info, _eventReporter, _target);
+
   return Status::OK;
 }}

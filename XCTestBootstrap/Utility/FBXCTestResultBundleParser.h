@@ -10,14 +10,14 @@
 #import <FBControlCore/FBControlCore.h>
 #import <XCTestBootstrap/XCTestBootstrap.h>
 
+
 NS_ASSUME_NONNULL_BEGIN
 
-@class FBDevice;
+@protocol FBiOSTarget;
 
-/**
- An implementation of FBXCTestCommands, for Devices.
- */
-@interface FBDeviceXCTestCommands : NSObject <FBXCTestCommands, FBiOSTargetCommand>
+@interface FBXCTestResultBundleParser : NSObject
+
++ (FBFuture<NSNull *> *)parse:(NSString *)resultBundlePath target:(id<FBiOSTarget>)target reporter:(id<FBTestManagerTestReporter>)reporter logger:(id<FBControlCoreLogger>)logger;
 
 @end
 

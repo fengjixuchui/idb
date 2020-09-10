@@ -8,8 +8,11 @@
 #import <Foundation/Foundation.h>
 
 #import <FBControlCore/FBiOSTargetCommandForwarder.h>
+#import <FBControlCore/FBFuture.h>
 
 NS_ASSUME_NONNULL_BEGIN
+
+@protocol FBProvisioningProfileCommands;
 
 /**
  File Commands related to a single target.
@@ -21,11 +24,11 @@ NS_ASSUME_NONNULL_BEGIN
  Copy items to from the host, to the target.
 
  @note Performs a recursive copy
- @param paths Array of source paths on the host. May be Files and/or Directories.
+ @param sourcePath The source path on the host. May be Files and/or Directories.
  @param destinationPath the destination path within the container.
  @return A future that resolves when successful.
  */
-- (FBFuture<NSNull *> *)copyPathsOnHost:(NSArray<NSURL *> *)paths toDestination:(NSString *)destinationPath;
+- (FBFuture<NSNull *> *)copyPathOnHost:(NSURL *)sourcePath toDestination:(NSString *)destinationPath;
 
 /**
  Relocate a file from the target, to the host.
@@ -45,21 +48,21 @@ NS_ASSUME_NONNULL_BEGIN
 - (FBFuture<NSNull *> *)createDirectory:(NSString *)directoryPath;
 
 /**
- Move paths inside the target.
+ Move a path inside the container
 
- @param originPaths relative paths to the container where data resides
+ @param sourcePath relative source path.
  @param destinationPath relative path where the data will be moved to
  @return A future that resolves when successful.
  */
-- (FBFuture<NSNull *> *)movePaths:(NSArray<NSString *> *)originPaths toDestinationPath:(NSString *)destinationPath;
+- (FBFuture<NSNull *> *)movePath:(NSString *)sourcePath toDestinationPath:(NSString *)destinationPath;
 
 /**
- Remove paths inside the target.
+ Remove a path inside the target.
 
- @param paths relative paths to the container where data resides
+ @param path relative path inside the container.
  @return A future that resolves when successful.
  */
-- (FBFuture<NSNull *> *)removePaths:(NSArray<NSString *> *)paths;
+- (FBFuture<NSNull *> *)removePath:(NSString *)path;
 
 /**
  List directory within the target.
@@ -68,6 +71,22 @@ NS_ASSUME_NONNULL_BEGIN
  @return A future containing the list of entries that resolves when successful.
  */
 - (FBFuture<NSArray<NSString *> *> *)contentsOfDirectory:(NSString *)path;
+
+@end
+
+/**
+ Implementations of File Commands.
+ */
+@interface FBFileContainer : NSObject
+
+/**
+ A file container for a Provisioning Profile Commands implementation.
+
+ @param commands the FBProvisioningProfileCommands instance to wrap.
+ @param queue the queue to do work on.
+ @return a File Container implementation.
+ */
++ (id<FBFileContainer>)fileContainerForProvisioningProfileCommands:(id<FBProvisioningProfileCommands>)commands queue:(dispatch_queue_t)queue;
 
 @end
 

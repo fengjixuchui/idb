@@ -34,7 +34,7 @@
 
 #pragma mark FBFileCommands
 
-- (FBFuture<NSNull *> *)copyPathsOnHost:(NSArray<NSURL *> *)paths toDestination:(NSString *)destinationPath
+- (FBFuture<NSNull *> *)copyPathOnHost:(NSURL *)sourcePath toDestination:(NSString *)destinationPath
 {
   return [[self
     dataContainer]
@@ -42,14 +42,12 @@
       NSError *error;
       NSURL *basePathURL =  [NSURL fileURLWithPathComponents:@[dataContainer, destinationPath]];
       NSFileManager *fileManager = NSFileManager.defaultManager;
-      for (NSURL *url in paths) {
-        NSURL *destURL = [basePathURL URLByAppendingPathComponent:url.lastPathComponent];
-        if (![fileManager copyItemAtURL:url toURL:destURL error:&error]) {
-          return [[[FBSimulatorError
-            describeFormat:@"Could not copy from %@ to %@: %@", url, destURL, error]
-            causedBy:error]
-            failFuture];
-        }
+      NSURL *destURL = [basePathURL URLByAppendingPathComponent:sourcePath.lastPathComponent];
+      if (![fileManager copyItemAtURL:sourcePath toURL:destURL error:&error]) {
+        return [[[FBSimulatorError
+          describeFormat:@"Could not copy from %@ to %@: %@", sourcePath, destURL, error]
+          causedBy:error]
+          failFuture];
       }
       return FBFuture.empty;
     }];
@@ -117,40 +115,36 @@
     }];
 }
 
-- (FBFuture<NSNull *> *)movePaths:(NSArray<NSString *> *)originPaths toDestinationPath:(NSString *)destinationPath
+- (FBFuture<NSNull *> *)movePath:(NSString *)sourcePath toDestinationPath:(NSString *)destinationPath
 {
   return [[self
     dataContainer]
     onQueue:self.queue fmap:^ FBFuture<NSNull *> * (NSString *dataContainer) {
       NSError *error;
       NSString *fullDestinationPath = [dataContainer stringByAppendingPathComponent:destinationPath];
-      for (NSString *originPath in originPaths) {
-        NSString *fullOriginPath = [dataContainer stringByAppendingPathComponent:originPath];
-        if (![NSFileManager.defaultManager moveItemAtPath:fullOriginPath toPath:fullDestinationPath error:&error]) {
-          return [[[FBSimulatorError
-            describeFormat:@"Could not move item at %@ to %@: %@", fullOriginPath, fullDestinationPath, error]
-            causedBy:error]
-            failFuture];
-        }
+      NSString *fullSourcePath = [dataContainer stringByAppendingPathComponent:sourcePath];
+      if (![NSFileManager.defaultManager moveItemAtPath:fullSourcePath toPath:fullDestinationPath error:&error]) {
+        return [[[FBSimulatorError
+          describeFormat:@"Could not move item at %@ to %@: %@", fullSourcePath, fullDestinationPath, error]
+          causedBy:error]
+          failFuture];
       }
       return FBFuture.empty;
     }];
 }
 
-- (FBFuture<NSNull *> *)removePaths:(NSArray<NSString *> *)paths
+- (FBFuture<NSNull *> *)removePath:(NSString *)path
 {
   return [[self
     dataContainer]
     onQueue:self.queue fmap:^ FBFuture<NSNull *> * (NSString *dataContainer) {
       NSError *error;
-      for (NSString *path in paths) {
-        NSString *fullPath = [dataContainer stringByAppendingPathComponent:path];
-        if (![NSFileManager.defaultManager removeItemAtPath:fullPath error:&error]) {
-          return [[[FBSimulatorError
-            describeFormat:@"Could not remove item at path %@: %@", fullPath, error]
-            causedBy:error]
-            failFuture];
-        }
+      NSString *fullPath = [dataContainer stringByAppendingPathComponent:path];
+      if (![NSFileManager.defaultManager removeItemAtPath:fullPath error:&error]) {
+        return [[[FBSimulatorError
+          describeFormat:@"Could not remove item at path %@: %@", fullPath, error]
+          causedBy:error]
+          failFuture];
       }
       return FBFuture.empty;
     }];
@@ -228,6 +222,13 @@
 - (FBFutureContext<id<FBFileContainer>> *)fileCommandsForMediaDirectory
 {
   return [FBFutureContext futureContextWithResult:[[FBSimulatorFileContainer alloc] initWithContainerPath:self.simulator.dataDirectory queue:self.simulator.asyncQueue]];
+}
+
+- (FBFutureContext<id<FBFileContainer>> *)fileCommandsForProvisioningProfiles
+{
+  return [[FBControlCoreError
+    describeFormat:@"%@ not supported on simulators", NSStringFromSelector(_cmd)]
+    failFutureContext];
 }
 
 #pragma mark Private

@@ -8,16 +8,16 @@
 #import <Foundation/Foundation.h>
 
 #import <FBControlCore/FBControlCore.h>
-#import <XCTestBootstrap/XCTestBootstrap.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class FBAMDServiceConnection;
 @class FBDevice;
 
 /**
- An implementation of FBXCTestCommands, for Devices.
+ Implementations of debugger related commands.
  */
-@interface FBDeviceXCTestCommands : NSObject <FBXCTestCommands, FBiOSTargetCommand>
+@interface FBDeviceProvisioningProfileCommands : NSObject <FBProvisioningProfileCommands>
 
 @end
 

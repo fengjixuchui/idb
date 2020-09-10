@@ -11,6 +11,7 @@
 #import "FBDevice+Private.h"
 #import "FBDeviceControlError.h"
 #import "FBAFCConnection.h"
+#import "FBDeviceProvisioningProfileCommands.h"
 
 @interface FBDeviceFileContainer ()
 
@@ -34,14 +35,12 @@
   return self;
 }
 
-- (FBFuture<NSNull *> *)copyPathsOnHost:(NSArray<NSURL *> *)paths toDestination:(NSString *)destinationPath
+- (FBFuture<NSNull *> *)copyPathOnHost:(NSURL *)sourcePath toDestination:(NSString *)destinationPath
 {
   return [self handleAFCOperation:^ NSNull * (FBAFCConnection *afc, NSError **error) {
-    for (NSURL *path in paths) {
-      BOOL success = [afc copyFromHost:path toContainerPath:destinationPath error:error];
-      if (!success) {
-        return nil;
-      }
+    BOOL success = [afc copyFromHost:sourcePath toContainerPath:destinationPath error:error];
+    if (!success) {
+      return nil;
     }
     return NSNull.null;
   }];
@@ -75,27 +74,23 @@
   }];
 }
 
-- (FBFuture<NSNull *> *)movePaths:(NSArray<NSString *> *)originPaths toDestinationPath:(NSString *)destinationPath
+- (FBFuture<NSNull *> *)movePath:(NSString *)sourcePath toDestinationPath:(NSString *)destinationPath
 {
   return [self handleAFCOperation:^ NSNull * (FBAFCConnection *afc, NSError **error) {
-    for (NSString *originPath in originPaths) {
-      BOOL success = [afc renamePath:originPath destination:destinationPath error:error];
-      if (!success) {
-        return nil;
-      }
+    BOOL success = [afc renamePath:sourcePath destination:destinationPath error:error];
+    if (!success) {
+      return nil;
     }
     return NSNull.null;
   }];
 }
 
-- (FBFuture<NSNull *> *)removePaths:(NSArray<NSString *> *)paths
+- (FBFuture<NSNull *> *)removePath:(NSString *)path
 {
   return [self handleAFCOperation:^ NSNull * (FBAFCConnection *afc, NSError **error) {
-    for (NSString *path in paths) {
-      BOOL success = [afc removePath:path recursively:YES error:error];
-      if (!success) {
-        return nil;
-      }
+    BOOL success = [afc removePath:path recursively:YES error:error];
+    if (!success) {
+      return nil;
     }
     return NSNull.null;
   }];
@@ -186,6 +181,11 @@
     onQueue:self.device.asyncQueue pend:^ FBFuture<id<FBFileContainer>> * (FBAFCConnection *connection) {
       return [FBFuture futureWithResult:[[FBDeviceFileContainer alloc] initWithAFCConnection:connection queue:self.device.asyncQueue]];
     }];
+}
+
+- (FBFutureContext<id<FBFileContainer>> *)fileCommandsForProvisioningProfiles
+{
+  return [FBFutureContext futureContextWithResult:[FBFileContainer fileContainerForProvisioningProfileCommands:[FBDeviceProvisioningProfileCommands commandsWithTarget:self.device] queue:self.device.workQueue]];
 }
 
 @end

@@ -19,7 +19,6 @@ service CompanionService {
   rpc contacts_update (ContactsUpdateRequest) returns (ContactsUpdateResponse) {}
   rpc debugserver (stream DebugServerRequest) returns (stream DebugServerResponse) {}
   rpc describe (TargetDescriptionRequest) returns (TargetDescriptionResponse) {}
-  rpc disconnect (DisconnectRequest) returns (DisconnectResponse) {}
   rpc focus (FocusRequest) returns (FocusResponse) {}
   rpc hid (stream HIDEvent) returns (HIDResponse) {}
   rpc install (stream InstallRequest) returns (stream InstallResponse) {}
@@ -57,6 +56,12 @@ message Payload {
     bytes data = 2;
     string url = 3;
   }
+}
+
+message CompanionInfo {
+  string udid = 1;
+  bool is_local = 4;
+  bytes metadata = 6;
 }
 
 message ListAppsRequest {
@@ -203,6 +208,7 @@ message TargetDescriptionRequest {
 
 message TargetDescriptionResponse {
   TargetDescription target_description = 1;
+  CompanionInfo companion = 2;
 }
 
 message HIDEvent {
@@ -265,8 +271,6 @@ message HIDEvent {
 message HIDResponse {
 }
 
-
-
 message FileInfo {
   string path = 1;
 }
@@ -278,19 +282,6 @@ message ConnectRequest {
 
 message ConnectResponse {
    CompanionInfo companion = 1;
-}
-
-message DisconnectRequest {
-}
-
-message DisconnectResponse {
-}
-
-message CompanionInfo {
-  string udid = 1;
-  string host = 2;
-  bool is_local = 4;
-  uint64 grpc_port = 5;
 }
 
 message ScreenDimensions {
@@ -610,7 +601,20 @@ message XctestRunResponse {
   string coverage_json = 5;
 }
 
-// Files
+// File
+
+message FileContainer {
+  enum Kind {
+    NONE = 0;
+    APPLICATION = 1;
+    ROOT = 2;
+    MEDIA = 3;
+    CRASHES = 4;
+    PROVISIONING_PROFILES = 5;
+  }
+  Kind kind = 1;
+  string bundle_id = 2;
+}
 
 message LsResponse {
   repeated FileInfo files = 1;
@@ -619,12 +623,14 @@ message LsResponse {
 message LsRequest {
   string bundle_id = 1;
   string path = 2;
+  FileContainer container = 3;
 }
 
 
 message MkdirRequest {
   string bundle_id = 1;
   string path = 2;
+  FileContainer container = 3;
 }
 
 message MkdirResponse {
@@ -634,6 +640,7 @@ message MvRequest {
   string bundle_id = 1;
   repeated string src_paths = 2;
   string dst_path = 3;
+  FileContainer container = 4;
 }
 
 message MvResponse {
@@ -642,6 +649,7 @@ message MvResponse {
 message RmRequest {
   string bundle_id = 1;
   repeated string paths = 2;
+  FileContainer container = 3;
 }
 
 message RmResponse {
@@ -651,6 +659,7 @@ message PushRequest {
   message Inner {
     string bundle_id = 1;
     string dst_path = 2;
+    FileContainer container = 3;
   }
   oneof value {
     Payload payload = 1;
@@ -665,6 +674,7 @@ message PullRequest {
   string bundle_id = 1;
   string src_path = 2;
   string dst_path = 3;
+  FileContainer container = 4;
 }
 
 message PullResponse {
