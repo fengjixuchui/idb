@@ -15,13 +15,16 @@
 #import "FBAMDevice.h"
 #import "FBAMRestorableDevice.h"
 #import "FBDeviceApplicationCommands.h"
-#import "FBDeviceFileCommands.h"
 #import "FBDeviceControlError.h"
 #import "FBDeviceCrashLogCommands.h"
 #import "FBDeviceDebuggerCommands.h"
 #import "FBDeviceDiagnosticInformationCommands.h"
+#import "FBDeviceEraseCommands.h"
+#import "FBDeviceFileCommands.h"
+#import "FBDeviceFileCommands.h"
 #import "FBDeviceLocationCommands.h"
 #import "FBDeviceLogCommands.h"
+#import "FBDevicePowerCommands.h"
 #import "FBDeviceScreenshotCommands.h"
 #import "FBDeviceVideoRecordingCommands.h"
 #import "FBDeviceXCTestCommands.h"
@@ -32,6 +35,7 @@
 
 @implementation FBDevice
 
+@synthesize activationState = _activationState;
 @synthesize allValues = _allValues;
 @synthesize amDevice = _amDevice;
 @synthesize architecture = _architecture;
@@ -212,6 +216,9 @@
   if (!_uniqueIdentifier || overwrite) {
     _uniqueIdentifier = targetInfo.uniqueIdentifier;
   }
+  if (!_activationState || overwrite) {
+    _activationState = targetInfo.activationState;
+  }
 }
 
 #pragma mark FBDevice Protocol Implementation
@@ -314,13 +321,16 @@
   static NSArray<Class> *commandClasses;
   dispatch_once(&onceToken, ^{
     commandClasses = @[
+      FBDeviceActivationCommands.class,
       FBDeviceApplicationCommands.class,
-      FBDeviceFileCommands.class,
       FBDeviceCrashLogCommands.class,
       FBDeviceDebuggerCommands.class,
       FBDeviceDiagnosticInformationCommands.class,
+      FBDeviceEraseCommands.class,
+      FBDeviceFileCommands.class,
       FBDeviceLocationCommands.class,
       FBDeviceLogCommands.class,
+      FBDevicePowerCommands.class,
       FBDeviceRecoveryCommands.class,
       FBDeviceScreenshotCommands.class,
       FBDeviceVideoRecordingCommands.class,

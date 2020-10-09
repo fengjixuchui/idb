@@ -27,6 +27,7 @@ from typing import (
     Tuple,
 )
 
+import idb.common.plugin as plugin
 from grpclib.client import Channel
 from grpclib.exceptions import GRPCError, ProtocolError, StreamTerminatedError
 from idb.common.companion import Companion
@@ -54,8 +55,8 @@ from idb.common.types import (
     CrashLogQuery,
     DomainSocketAddress,
     FileContainer,
-    FileContainerType,
     FileEntryInfo,
+    FileListing,
     HIDButtonType,
     HIDEvent,
     IdbClient as IdbClientBase,
@@ -89,6 +90,7 @@ from idb.grpc.idb_pb2 import (
     AddMediaRequest,
     ApproveRequest,
     ClearKeychainRequest,
+    ConnectRequest,
     ContactsUpdateRequest,
     CrashShowRequest,
     DebugServerRequest,
@@ -112,6 +114,7 @@ from idb.grpc.idb_pb2 import (
     RmRequest,
     ScreenshotRequest,
     SetLocationRequest,
+    SettingRequest,
     TargetDescriptionRequest,
     TerminateRequest,
     UninstallRequest,
@@ -138,7 +141,7 @@ from idb.grpc.stream import (
     generate_bytes,
     stop_wrapper,
 )
-from idb.grpc.target import target_to_py
+from idb.grpc.target import companion_to_py, target_to_py
 from idb.grpc.video import generate_video_bytes
 from idb.grpc.xctest import (
     make_request,
@@ -163,12 +166,10 @@ VIDEO_FORMAT_MAP: Dict[VideoFormat, VideoStreamRequest] = {
     VideoFormat.RBGA: VideoStreamRequest.RBGA,
 }
 
-CLIENT_METADATA: LoggingMetadata = {"component": "client"}
-
 
 def log_and_handle_exceptions(func):  # pyre-ignore
     @functools.wraps(func)
-    @log_call(name=func.__name__, metadata=CLIENT_METADATA)
+    @log_call(name=func.__name__)
     async def func_wrapper(*args: Any, **kwargs: Any) -> Any:  # pyre-ignore
         try:
             return await func(*args, **kwargs)
@@ -180,7 +181,7 @@ def log_and_handle_exceptions(func):  # pyre-ignore
             raise IdbConnectionException(e.strerror)
 
     @functools.wraps(func)
-    @log_call(name=func.__name__, metadata=CLIENT_METADATA)
+    @log_call(name=func.__name__)
     # pyre-fixme[53]: Captured variable `func` is not annotated.
     async def func_wrapper_gen(*args: Any, **kwargs: Any) -> Any:
         try:
@@ -203,34 +204,69 @@ class IdbClient(IdbClientBase):
     def __init__(
         self,
         stub: CompanionServiceStub,
-        address: Address,
-        is_local: bool,
+        companion: CompanionInfo,
         logger: logging.Logger,
     ) -> None:
         self.stub = stub
-        self.address = address
-        self.is_local = is_local
+        self.companion = companion
         self.logger = logger
+
+    @property
+    def address(self) -> Address:
+        return self.companion.address
+
+    @property
+    def is_local(self) -> bool:
+        return self.companion.is_local
 
     @classmethod
     @asynccontextmanager
     async def build(
-        cls, address: Address, is_local: bool, logger: logging.Logger
+        cls,
+        address: Address,
+        logger: logging.Logger,
+        is_local: Optional[bool] = None,
+        exchange_metadata: bool = True,
     ) -> AsyncGenerator["IdbClient", None]:
-        channel = (
+        metadata_to_companion = (
+            {
+                key: value
+                for (key, value) in plugin.resolve_metadata(logger=logger).items()
+                if isinstance(value, str)
+            }
+            if exchange_metadata
+            else {}
+        )
+        async with (
             Channel(host=address.host, port=address.port, loop=asyncio.get_event_loop())
             if isinstance(address, TCPAddress)
             else Channel(path=address.path, loop=asyncio.get_event_loop())
-        )
-        try:
-            yield IdbClient(
-                stub=CompanionServiceStub(channel=channel),
-                address=address,
-                is_local=is_local,
-                logger=logger,
+        ) as channel:
+            stub = CompanionServiceStub(channel=channel)
+            with tempfile.NamedTemporaryFile(mode="w+b") as f:
+                try:
+                    response = await stub.connect(
+                        ConnectRequest(
+                            metadata=metadata_to_companion, local_file_path=f.name
+                        )
+                    )
+                except Exception as ex:
+                    raise IdbException(
+                        f"Failed to connect to companion at address {address}: {ex}"
+                    )
+            companion = companion_to_py(
+                companion=response.companion, address=address, is_local=is_local
             )
-        finally:
-            channel.close()
+            if exchange_metadata:
+                metadata_from_companion = {
+                    key: value
+                    for (key, value) in companion.metadata.items()
+                    if isinstance(value, str)
+                }
+                plugin.append_companion_metadata(
+                    logger=logger, metadata=metadata_from_companion
+                )
+            yield IdbClient(stub=stub, companion=companion, logger=logger)
 
     @classmethod
     @asynccontextmanager
@@ -354,7 +390,7 @@ class IdbClient(IdbClientBase):
                 await stream.end()
                 await stream.recv_message()
             else:
-                print(file_paths)
+                self.logger.info(f"Adding media from {file_paths}")
                 generator = stream_map(
                     generate_tar(
                         paths=file_paths,
@@ -459,7 +495,9 @@ class IdbClient(IdbClientBase):
         )
 
     @log_and_handle_exceptions
-    async def ls(self, container: FileContainer, path: str) -> List[FileEntryInfo]:
+    async def ls_single(
+        self, container: FileContainer, path: str
+    ) -> List[FileEntryInfo]:
         response = await self.stub.ls(
             LsRequest(
                 bundle_id=file_container_to_bundle_id_deprecated(container),
@@ -468,6 +506,19 @@ class IdbClient(IdbClientBase):
             )
         )
         return [FileEntryInfo(path=file.path) for file in response.files]
+
+    @log_and_handle_exceptions
+    async def ls(self, container: FileContainer, paths: List[str]) -> List[FileListing]:
+        response = await self.stub.ls(
+            LsRequest(paths=paths, container=file_container_to_grpc(container))
+        )
+        return [
+            FileListing(
+                parent=listing.parent.path,
+                entries=[FileEntryInfo(path=entry.path) for entry in listing.files],
+            )
+            for listing in response.listings
+        ]
 
     @log_and_handle_exceptions
     async def mkdir(self, container: FileContainer, path: str) -> None:
@@ -955,3 +1006,11 @@ class IdbClient(IdbClientBase):
             source=LogRequest.COMPANION, stop=stop, arguments=None
         ):
             yield message
+
+    @log_and_handle_exceptions
+    async def set_hardware_keyboard(self, enabled: bool) -> None:
+        await self.stub.setting(
+            SettingRequest(
+                hardwareKeyboard=SettingRequest.HardwareKeyboard(enabled=enabled)
+            )
+        )

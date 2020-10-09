@@ -29,6 +29,9 @@ extern FBFileContainerKind const FBFileContainerKindCrashes;
 extern FBFileContainerKind const FBFileContainerKindMedia;
 extern FBFileContainerKind const FBFileContainerKindRoot;
 extern FBFileContainerKind const FBFileContainerKindProvisioningProfiles;
+extern FBFileContainerKind const FBFileContainerKindMDMProfiles;
+extern FBFileContainerKind const FBFileContainerKindSpringboardIcons;
+extern FBFileContainerKind const FBFileContainerKindWallpaper;
 
 @interface FBIDBCommandExecutor : NSObject
 
@@ -350,8 +353,18 @@ This allows to avoid the permission popup the first time we open a deeplink
 
 /**
  Fetches diagnostic information
+
+ @return a Future wrapping the diagnostic information
  */
 - (FBFuture<NSDictionary<NSString *, id> *> *)diagnostic_information;
+
+/**
+ Sets the hardware keyboard
+
+ @param enabled YES if enabled, NO if disabled.
+ @return a Future that resolves when successful.
+ */
+- (FBFuture<NSNull *> *)set_hardware_keyboard_enabled:(BOOL)enabled;
 
 #pragma mark File Operations
 
@@ -414,13 +427,22 @@ This allows to avoid the permission popup the first time we open a deeplink
 - (FBFuture<NSNull *> *)remove_paths:(NSArray<NSString *> *)paths containerType:(nullable NSString *)containerType;
 
 /**
- Lists path within the container
-
+ Lists path within the container. The api exists for backwards-compatibility
+ 
  @param path relative path to the container where data resides
  @param containerType the Bundle Identifier of the Container.
  @return A future that resolves with the list of files.
  */
 - (FBFuture<NSArray<NSString *> *> *)list_path:(NSString *)path containerType:(nullable NSString *)containerType;
+
+/**
+ Lists path within the container
+
+ @param paths relative path to the container where data resides
+ @param containerType the Bundle Identifier of the Container.
+ @return A future that resolves with a mapping of path to listing of paths within it.
+ */
+- (FBFuture<NSDictionary<NSString *, NSArray<NSString *> *> *> *)list_paths:(NSArray<NSString *> *)paths containerType:(nullable NSString *)containerType;
 
 /**
  Creates a directory

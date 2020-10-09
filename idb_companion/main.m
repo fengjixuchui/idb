@@ -27,6 +27,7 @@ Usage: \n \
   Modes of operation, only one of these may be specified:\n\
     --udid UDID|mac|only       Launches a companion server for the specified UDID, 'mac' for a mac companion, or 'only' to run a companion for the only simulator/device available.\n\
     --boot UDID                Boots the simulator with the specified UDID.\n\
+    --reboot UDID              Reboots the target with the specified UDID.\n\
     --shutdown UDID            Shuts down the simulator with the specified UDID.\n\
     --erase UDID               Erases the simulator with the specified UDID.\n\
     --delete UDID|all          Deletes the simulator with the specified UDID, or 'all' to delete all simulators in the set.\n\
@@ -35,6 +36,7 @@ Usage: \n \
     --clone-destination-set    A path to the destination device set in a clone operation, --device-set-path specifies the source simulator.\n\
     --recover ecid:ECID        Causes the targeted device ECID to enter recovery mode\n\
     --unrecover ecid:ECID      Causes the targeted device ECID to exit recovery mode\n\
+    --activate ecid:ECID       Causes the device to activate\n\
     --notify PATH|stdout       Launches a companion notifier which will stream availability updates to the specified path, or stdout.\n\
     --list 1                   Lists all available devices/simulators in the current context.\n\
     --help                     Show this help message and exit.\n\
@@ -243,9 +245,29 @@ static FBFuture<FBFuture<NSNull *> *> *BootFuture(NSString *udid, NSUserDefaults
 
 static FBFuture<NSNull *> *ShutdownFuture(NSString *udid, NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
 {
-  return [SimulatorFuture(udid, userDefaults, logger, reporter)
-    onQueue:dispatch_get_main_queue() fmap:^(FBSimulator *simulator) {
-      return [simulator shutdown];
+  return [TargetForUDID(udid, userDefaults, NO, logger, reporter)
+    onQueue:dispatch_get_main_queue() fmap:^ FBFuture<NSNull *> * (id<FBiOSTarget> target) {
+      id<FBPowerCommands> commands = (id<FBPowerCommands>) target;
+      if (![commands conformsToProtocol:@protocol(FBPowerCommands)]) {
+        return [[FBIDBError
+          describeFormat:@"Cannot shutdown %@, does not support shutting down", target]
+          failFuture];
+      }
+      return [commands shutdown];
+    }];
+}
+
+static FBFuture<NSNull *> *RebootFuture(NSString *udid, NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
+{
+  return [TargetForUDID(udid, userDefaults, NO, logger, reporter)
+    onQueue:dispatch_get_main_queue() fmap:^ FBFuture<NSNull *> * (id<FBiOSTarget> target) {
+      id<FBPowerCommands> commands = (id<FBPowerCommands>) target;
+      if (![commands conformsToProtocol:@protocol(FBPowerCommands)]) {
+        return [[FBIDBError
+          describeFormat:@"Cannot shutdown %@, does not support rebooting", target]
+          failFuture];
+      }
+      return [commands reboot];
     }];
 }
 
@@ -351,6 +373,14 @@ static FBFuture<NSNull *> *ExitRecoveryFuture(NSString *ecid, id<FBControlCoreLo
     }];
 }
 
+static FBFuture<NSNull *> *ActivateFuture(NSString *ecid, id<FBControlCoreLogger> logger)
+{
+  return [DeviceForECID(ecid, logger)
+    onQueue:dispatch_get_main_queue() fmap:^ FBFuture<NSNull *> * (FBDevice *device) {
+      return [device activate];
+    }];
+}
+
 static FBFuture<FBFuture<NSNull *> *> *CompanionServerFuture(NSString *udid, NSUserDefaults *userDefaults, id<FBControlCoreLogger> logger, id<FBEventReporter> reporter)
 {
   BOOL terminateOffline = [userDefaults boolForKey:@"-terminate-offline"];
@@ -411,6 +441,7 @@ static FBFuture<FBFuture<NSNull *> *> *NotiferFuture(NSString *notify, NSUserDef
 
 static FBFuture<FBFuture<NSNull *> *> *GetCompanionCompletedFuture(int argc, const char *argv[], NSUserDefaults *userDefaults, FBIDBLogger *logger) {
   NSString *boot = [userDefaults stringForKey:@"-boot"];
+  NSString *reboot = [userDefaults stringForKey:@"-reboot"];
   NSString *clone = [userDefaults stringForKey:@"-clone"];
   NSString *create = [userDefaults stringForKey:@"-create"];
   NSString *delete = [userDefaults stringForKey:@"-delete"];
@@ -421,6 +452,7 @@ static FBFuture<FBFuture<NSNull *> *> *GetCompanionCompletedFuture(int argc, con
   NSString *shutdown = [userDefaults stringForKey:@"-shutdown"];
   NSString *udid = [userDefaults stringForKey:@"-udid"];
   NSString *unrecover = [userDefaults stringForKey:@"-unrecover"];
+  NSString *activate = [userDefaults stringForKey:@"-activate"];
 
   id<FBEventReporter> reporter = FBIDBConfiguration.eventReporter;
   if (udid) {
@@ -434,9 +466,12 @@ static FBFuture<FBFuture<NSNull *> *> *GetCompanionCompletedFuture(int argc, con
   } else if (boot) {
     [logger logFormat:@"Booting %@", boot];
     return BootFuture(boot, userDefaults, logger, reporter);
-  } else if(shutdown) {
+  } else if (shutdown) {
     [logger.info logFormat:@"Shutting down %@", shutdown];
     return [FBFuture futureWithResult:ShutdownFuture(shutdown, userDefaults, logger, reporter)];
+  } else if (reboot) {
+    [logger.info logFormat:@"Rebooting %@", reboot];
+    return [FBFuture futureWithResult:ShutdownFuture(reboot, userDefaults, logger, reporter)];
   } else if (erase) {
     [logger.info logFormat:@"Erasing %@", erase];
     return [FBFuture futureWithResult:EraseFuture(erase, userDefaults, logger, reporter)];
@@ -455,6 +490,9 @@ static FBFuture<FBFuture<NSNull *> *> *GetCompanionCompletedFuture(int argc, con
   } else if (unrecover) {
     [logger.info logFormat:@"Removing %@ from recovery", recover];
     return [FBFuture futureWithResult:ExitRecoveryFuture(unrecover, logger)];
+  } else if (activate) {
+    [logger.info logFormat:@"Activating %@", activate];
+    return [FBFuture futureWithResult:ActivateFuture(activate, logger)];
   }
   return [[[FBIDBError
     describeFormat:@"You must specify at least one 'Mode of operation'\n\n%s", kUsageHelpMessage]

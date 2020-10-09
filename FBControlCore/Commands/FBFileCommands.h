@@ -48,6 +48,27 @@ NS_ASSUME_NONNULL_BEGIN
  */
 - (FBFutureContext<id<FBFileContainer>> *)fileCommandsForProvisioningProfiles;
 
+/**
+ Returns a file container for MDM Profiles.
+
+ @return a Future context that resolves with an implementation of the file container.
+ */
+- (FBFutureContext<id<FBFileContainer>> *)fileCommandsForMDMProfiles;
+
+/**
+ Returns a file container for modification of the Springboard icon layout.
+
+ @return a Future context that resolves with an implementation of the file container.
+ */
+- (FBFutureContext<id<FBFileContainer>> *)fileCommandsForSpringboardIconLayout;
+
+/**
+ Returns a file container for modification wallpaper.
+
+ @return a Future context that resolves with an implementation of the file container.
+ */
+- (FBFutureContext<id<FBFileContainer>> *)fileCommandsForWallpaper;
+
 @end
 
 NS_ASSUME_NONNULL_END

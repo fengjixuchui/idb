@@ -180,6 +180,18 @@ static void final_resolveUntil(FBMutableFuture *final, dispatch_queue_t queue, F
   return [self futureContextWithFuture:[FBFuture futureWithError:error]];
 }
 
++ (FBFutureContext<NSArray<id> *> *)futureContextWithFutureContexts:(NSArray<FBFutureContext *> *)contexts
+{
+  NSMutableArray<FBFuture *> *futures = NSMutableArray.array;
+  NSMutableArray<FBFutureContext_Teardown *> *teardowns = NSMutableArray.array;
+  for (FBFutureContext *context in contexts) {
+    [futures addObject:context.future];
+    [teardowns addObjectsFromArray:context.teardowns];
+  }
+  FBFuture<NSArray<id> *> *future = [FBFuture futureWithFutures:futures];
+  return [[FBFutureContext alloc] initWithFuture:future teardowns:teardowns];
+}
+
 - (instancetype)initWithFuture:(FBFuture *)future teardowns:(NSMutableArray<FBFutureContext_Teardown *> *)teardowns
 {
   self = [super init];
@@ -418,6 +430,7 @@ static void final_resolveUntil(FBMutableFuture *final, dispatch_queue_t queue, F
   dispatch_queue_t queue = dispatch_queue_create("com.facebook.fbcontrolcore.future.composite", DISPATCH_QUEUE_SERIAL);
   __block NSUInteger remaining = futures.count;
 
+  // `futureCompleted` must be called on `queue`.
   void (^futureCompleted)(FBFuture *, NSUInteger) = ^(FBFuture *future, NSUInteger index) {
     if (compositeFuture.hasCompleted) {
       return;
@@ -447,7 +460,17 @@ static void final_resolveUntil(FBMutableFuture *final, dispatch_queue_t queue, F
   for (NSUInteger index = 0; index < futures.count; index++) {
     FBFuture *future = futures[index];
     if (future.hasCompleted) {
-      futureCompleted(future, index);
+      // The reason that this is done in-line is to avoid work being
+      // asynchronous when not necessary. For example a future-of-futures where
+      // the input futures have resolved already should resolve immediately.
+      // The dispatch_sync ensures that in this case, the composed future is
+      // resolved before returning from the constructor.
+      // It's OK to use dispatch_sync here: queue is local; there is no dispatch
+      // calls within futureCompleted().
+      // @lint-ignore FBOBJCDISCOURAGEDFUNCTION
+      dispatch_sync(queue, ^{
+        futureCompleted(future, index);
+      });
     } else {
       [future onQueue:queue notifyOfCompletion:^(FBFuture *innerFuture){
         futureCompleted(innerFuture, index);
@@ -471,6 +494,7 @@ static void final_resolveUntil(FBMutableFuture *final, dispatch_queue_t queue, F
     }
   };
 
+  // `futureCompleted` must be called on `queue`.
   void (^futureCompleted)(FBFuture *future) = ^(FBFuture *future){
     remainingCounter--;
     if (future.result) {
@@ -490,7 +514,17 @@ static void final_resolveUntil(FBMutableFuture *final, dispatch_queue_t queue, F
 
   for (FBFuture *future in futures) {
     if (future.hasCompleted) {
-      futureCompleted(future);
+      // The reason that this is done in-line is to avoid work being
+      // asynchronous when not necessary. For example a future-of-futures where
+      // the input futures have resolved already should resolve immediately.
+      // The dispatch_sync ensures that in this case, the composed future is
+      // resolved before returning from the constructor.
+      // It's OK to use dispatch_sync here: queue is local; there is no dispatch
+      // calls within futureCompleted()
+      // @lint-ignore FBOBJCDISCOURAGEDFUNCTION
+      dispatch_sync(queue, ^{
+        futureCompleted(future);
+      });
     } else {
       [future onQueue:queue notifyOfCompletion:futureCompleted];
     }

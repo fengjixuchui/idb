@@ -169,6 +169,12 @@ class FileEntryInfo:
 
 
 @dataclass(frozen=True)
+class FileListing:
+    parent: str
+    entries: List[FileEntryInfo]
+
+
+@dataclass(frozen=True)
 class AccessibilityInfo:
     json: Optional[str]
 
@@ -414,6 +420,10 @@ class IdbClient(ABC):
         pass
 
     @abstractmethod
+    async def set_hardware_keyboard(self, enabled: bool) -> None:
+        pass
+
+    @abstractmethod
     async def open_url(self, url: str) -> None:
         pass
 
@@ -540,7 +550,13 @@ class IdbClient(ABC):
         pass
 
     @abstractmethod
-    async def ls(self, container: FileContainer, path: str) -> List[FileEntryInfo]:
+    async def ls_single(
+        self, container: FileContainer, path: str
+    ) -> List[FileEntryInfo]:
+        pass
+
+    @abstractmethod
+    async def ls(self, container: FileContainer, paths: List[str]) -> List[FileListing]:
         pass
 
     @abstractmethod

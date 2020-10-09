@@ -11,27 +11,33 @@ package idb;
 
 // The idb companion service definition.
 service CompanionService {
-  rpc accessibility_info (AccessibilityInfoRequest) returns (AccessibilityInfoResponse) {}
-  rpc add_media (stream AddMediaRequest) returns (AddMediaResponse) {}
-  rpc approve (ApproveRequest) returns (ApproveResponse) {}
-  rpc clear_keychain (ClearKeychainRequest) returns (ClearKeychainResponse) {}
+  // Management
   rpc connect (ConnectRequest) returns (ConnectResponse) {}
-  rpc contacts_update (ContactsUpdateRequest) returns (ContactsUpdateResponse) {}
   rpc debugserver (stream DebugServerRequest) returns (stream DebugServerResponse) {}
   rpc describe (TargetDescriptionRequest) returns (TargetDescriptionResponse) {}
-  rpc focus (FocusRequest) returns (FocusResponse) {}
-  rpc hid (stream HIDEvent) returns (HIDResponse) {}
   rpc install (stream InstallRequest) returns (stream InstallResponse) {}
   rpc instruments_run (stream InstrumentsRunRequest) returns (stream InstrumentsRunResponse) {}
+  rpc log (LogRequest) returns (stream LogResponse) {}
+  // Interaction
+  rpc accessibility_info (AccessibilityInfoRequest) returns (AccessibilityInfoResponse) {}
+  rpc focus (FocusRequest) returns (FocusResponse) {}
+  rpc hid (stream HIDEvent) returns (HIDResponse) {}
+  rpc open_url (OpenUrlRequest) returns (OpenUrlRequest) {}
+  rpc set_location (SetLocationRequest) returns (SetLocationResponse) {}
+  // Settings
+  rpc approve (ApproveRequest) returns (ApproveResponse) {}
+  rpc clear_keychain (ClearKeychainRequest) returns (ClearKeychainResponse) {}
+  rpc contacts_update (ContactsUpdateRequest) returns (ContactsUpdateResponse) {}
+  rpc setting (SettingRequest) returns (SettingResponse) {}
+  // App
   rpc launch (stream LaunchRequest) returns (stream LaunchResponse) {}
   rpc list_apps (ListAppsRequest) returns (ListAppsResponse) {}
-  rpc log (LogRequest) returns (stream LogResponse) {}
-  rpc open_url (OpenUrlRequest) returns (OpenUrlRequest) {}
-  rpc record (stream RecordRequest) returns (stream RecordResponse) {}
-  rpc screenshot (ScreenshotRequest) returns (ScreenshotResponse) {}
-  rpc set_location (SetLocationRequest) returns (SetLocationResponse) {}
   rpc terminate (TerminateRequest) returns (TerminateResponse) {}
   rpc uninstall (UninstallRequest) returns (UninstallResponse) {}
+  // Video/Audio
+  rpc add_media (stream AddMediaRequest) returns (AddMediaResponse) {}
+  rpc record (stream RecordRequest) returns (stream RecordResponse) {}
+  rpc screenshot (ScreenshotRequest) returns (ScreenshotResponse) {}
   rpc video_stream (stream VideoStreamRequest) returns (stream VideoStreamResponse) {}
   // Crash Operations
   rpc crash_delete (CrashLogQuery) returns (CrashLogResponse) {}
@@ -62,6 +68,18 @@ message CompanionInfo {
   string udid = 1;
   bool is_local = 4;
   bytes metadata = 6;
+}
+
+message SettingRequest {
+  message HardwareKeyboard {
+    bool enabled = 1;
+  }
+  oneof setting  {
+    HardwareKeyboard hardwareKeyboard = 1;
+  }
+}
+
+message SettingResponse {
 }
 
 message ListAppsRequest {
@@ -201,7 +219,6 @@ message ContactsUpdateRequest {
 message ContactsUpdateResponse {
 }
 
-
 message TargetDescriptionRequest {
   bool fetch_diagnostics = 1;
 }
@@ -271,9 +288,6 @@ message HIDEvent {
 message HIDResponse {
 }
 
-message FileInfo {
-  string path = 1;
-}
 
 message ConnectRequest {
   map<string, string> metadata = 1;
@@ -499,7 +513,7 @@ message CrashLogQuery {
   string name = 4;
 }
 
-// xctest 
+// xctest
 
 message XctestListBundlesRequest {
 }
@@ -611,21 +625,34 @@ message FileContainer {
     MEDIA = 3;
     CRASHES = 4;
     PROVISIONING_PROFILES = 5;
+    MDM_PROFILES = 6;
+    SPRINGBOARD_ICONS = 7;
+    WALLPAPER = 8;
   }
   Kind kind = 1;
   string bundle_id = 2;
 }
 
+message FileInfo {
+  string path = 1;
+}
+
+message FileListing {
+  FileInfo parent = 1;
+  repeated FileInfo files = 2;
+}
+
 message LsResponse {
   repeated FileInfo files = 1;
+  repeated FileListing listings = 2;
 }
 
 message LsRequest {
   string bundle_id = 1;
   string path = 2;
   FileContainer container = 3;
+  repeated string paths = 4;
 }
-
 
 message MkdirRequest {
   string bundle_id = 1;
@@ -680,4 +707,3 @@ message PullRequest {
 message PullResponse {
   Payload payload = 1;
 }
-

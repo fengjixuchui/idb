@@ -50,9 +50,12 @@ static FBFuture<NSNull *> * resolve_next_read(grpc::internal::ReaderInterface<T>
 }
 
 template <class T>
-static id<FBDataConsumer> drain_consumer(grpc::internal::WriterInterface<T> *writer)
+static id<FBDataConsumer> drain_consumer(grpc::internal::WriterInterface<T> *writer, FBFuture<NSNull *> *done)
 {
   return [FBBlockDataConsumer asynchronousDataConsumerWithBlock:^(NSData *data) {
+    if (done.hasCompleted) {
+      return;
+    }
     T response;
     idb::Payload *payload = response.mutable_payload();
     payload->set_data(data.bytes, data.length);
@@ -61,7 +64,7 @@ static id<FBDataConsumer> drain_consumer(grpc::internal::WriterInterface<T> *wri
 }
 
 template <class Write, class Read>
-static id<FBDataConsumer> consumer_from_request(grpc::ServerReaderWriter<Write, Read> *stream, Read& request, NSError **error)
+static id<FBDataConsumer> consumer_from_request(grpc::ServerReaderWriter<Write, Read> *stream, Read& request, FBFuture<NSNull *> *done, NSError **error)
 {
   Read initial;
   stream->Read(&initial);
@@ -70,7 +73,7 @@ static id<FBDataConsumer> consumer_from_request(grpc::ServerReaderWriter<Write, 
   if (requestedFilePath.length() > 0) {
     return [FBFileWriter syncWriterForFilePath:nsstring_from_c_string(requestedFilePath.c_str()) error:error];
   }
-  return drain_consumer(stream);
+  return drain_consumer(stream, done);
 }
 
 template <class T>
@@ -421,11 +424,9 @@ static idb::TargetDescription description_of_target(id<FBiOSTarget> target)
   return description;
 }
 
-static NSString *file_container(idb::FileContainer container, std::string bundleID)
+static NSString *file_container(idb::FileContainer container)
 {
   switch (container.kind()) {
-    case idb::FileContainer_Kind_APPLICATION:
-      return nsstring_from_c_string(container.bundle_id());
     case idb::FileContainer_Kind_ROOT:
       return FBFileContainerKindRoot;
     case idb::FileContainer_Kind_MEDIA:
@@ -434,14 +435,16 @@ static NSString *file_container(idb::FileContainer container, std::string bundle
       return FBFileContainerKindCrashes;
     case idb::FileContainer_Kind_PROVISIONING_PROFILES:
       return FBFileContainerKindProvisioningProfiles;
+    case idb::FileContainer_Kind_MDM_PROFILES:
+      return FBFileContainerKindMDMProfiles;
+    case idb::FileContainer_Kind_SPRINGBOARD_ICONS:
+      return FBFileContainerKindSpringboardIcons;
+    case idb::FileContainer_Kind_WALLPAPER:
+      return FBFileContainerKindWallpaper;
+    case idb::FileContainer_Kind_APPLICATION:
     default:
-      break;
+      return nsstring_from_c_string(container.bundle_id());
   }
-  // Compatability cases, where we derive purely from the bundleID
-  if (bundleID.length() == 0) {
-    return nil;
-  }
-  return nsstring_from_c_string(bundleID);
 }
 
 static void populate_companion_info(idb::CompanionInfo *info, id<FBEventReporter> reporter, id<FBiOSTarget> target)
@@ -656,7 +659,7 @@ Status FBIDBServiceHandler::uninstall(ServerContext *context, const idb::Uninsta
 Status FBIDBServiceHandler::mkdir(grpc::ServerContext *context, const idb::MkdirRequest *request, idb::MkdirResponse *response)
 {@autoreleasepool{
   NSError *error = nil;
-  [[_commandExecutor create_directory:nsstring_from_c_string(request->path()) containerType:file_container(request->container(), request->bundle_id())] block:&error];
+  [[_commandExecutor create_directory:nsstring_from_c_string(request->path()) containerType:file_container(request->container())] block:&error];
   if (error) {
     return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
   }
@@ -670,7 +673,7 @@ Status FBIDBServiceHandler::mv(grpc::ServerContext *context, const idb::MvReques
   for (int j = 0; j < request->src_paths_size(); j++) {
     [originalPaths addObject:nsstring_from_c_string(request->src_paths(j))];
   }
-  [[_commandExecutor move_paths:originalPaths to_path:nsstring_from_c_string(request->dst_path()) containerType:file_container(request->container(), request->bundle_id())] block:&error];
+  [[_commandExecutor move_paths:originalPaths to_path:nsstring_from_c_string(request->dst_path()) containerType:file_container(request->container())] block:&error];
   if (error) {
     return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
   }
@@ -684,7 +687,7 @@ Status FBIDBServiceHandler::rm(grpc::ServerContext *context, const idb::RmReques
   for (int j = 0; j < request->paths_size(); j++) {
     [paths addObject:nsstring_from_c_string(request->paths(j))];
   }
-  [[_commandExecutor remove_paths:paths containerType:file_container(request->container(), request->bundle_id())] block:&error];
+  [[_commandExecutor remove_paths:paths containerType:file_container(request->container())] block:&error];
   if (error) {
     return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
   }
@@ -694,14 +697,34 @@ Status FBIDBServiceHandler::rm(grpc::ServerContext *context, const idb::RmReques
 Status FBIDBServiceHandler::ls(grpc::ServerContext *context, const idb::LsRequest *request, idb::LsResponse *response)
 {@autoreleasepool{
   NSError *error = nil;
-  NSArray<NSString *> *paths = [[_commandExecutor list_path:nsstring_from_c_string(request->path()) containerType:file_container(request->container(), request->bundle_id())] block:&error];
-  if (error) {
-    return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
-  }
+  if (request->paths_size() > 0) {
+    NSArray<NSString *> *inputPaths = extract_string_array(request->paths());
+    NSDictionary<NSString *, NSArray<NSString *> *> *pathsToPaths = [[_commandExecutor list_paths:inputPaths containerType:file_container(request->container())] block:&error];
+    if (error) {
+      return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
+    }
+    
+    for (NSString *containerPath in pathsToPaths.allKeys) {
+      NSArray<NSString *> *paths = pathsToPaths[containerPath];
+      idb::FileListing *listing = response->add_listings();
+      idb::FileInfo *parent = listing->mutable_parent();
+      parent->set_path(containerPath.UTF8String);
+      for (NSString *path in paths) {
+        idb::FileInfo *info = listing->add_files();
+        info->set_path(path.UTF8String);
+      }
+    }
+  } else {
+    // Back-compat with single paths
+    NSArray<NSString *> *paths = [[_commandExecutor list_path:nsstring_from_c_string(request->path()) containerType:file_container(request->container())] block:&error];
+    if (error) {
+      return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
+    }
 
-  for (NSString *path in paths) {
-    idb::FileInfo *info = response->add_files();
-    info->set_path(path.UTF8String);
+    for (NSString *path in paths) {
+      idb::FileInfo *info = response->add_files();
+      info->set_path(path.UTF8String);
+    }
   }
 
   return Status::OK;
@@ -782,6 +805,22 @@ Status FBIDBServiceHandler::set_location(ServerContext *context, const idb::SetL
     return Status(grpc::StatusCode::INTERNAL, [error.localizedDescription UTF8String]);
   }
   return Status::OK;
+}}
+
+Status FBIDBServiceHandler::setting(ServerContext* context, const idb::SettingRequest* request, idb::SettingResponse* response)
+{@autoreleasepool{
+  switch (request->setting_case()) {
+    case idb::SettingRequest::SettingCase::kHardwareKeyboard: {
+      NSError *error = nil;
+      [[_commandExecutor set_hardware_keyboard_enabled:request->hardwarekeyboard().enabled()] await:&error];
+      if (error) {
+        return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
+      }
+      return Status::OK;
+    }
+    default:
+      return Status(grpc::StatusCode::INTERNAL, "Unknown setting case");
+  }
 }}
 
 Status FBIDBServiceHandler::contacts_update(ServerContext *context, const idb::ContactsUpdateRequest *request, idb::ContactsUpdateResponse *response)
@@ -991,7 +1030,8 @@ Status FBIDBServiceHandler::video_stream(ServerContext* context, grpc::ServerRea
 {@autoreleasepool{
   NSError *error = nil;
   idb::VideoStreamRequest request;
-  id<FBDataConsumer> consumer = consumer_from_request(stream, request, &error);
+  FBMutableFuture<NSNull *> *done = FBMutableFuture.future;
+  id<FBDataConsumer> consumer = consumer_from_request(stream, request, done, &error);
   if (!consumer) {
     return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
   }
@@ -1014,6 +1054,8 @@ Status FBIDBServiceHandler::video_stream(ServerContext* context, grpc::ServerRea
 
   // Stop the streaming for real. It may have stopped already in which case this returns instantly.
   success = [[bitmapStream stopStreaming] block:&error] != nil;
+  // Signal that we're done so we don't write to a dangling pointer.
+  [done resolveWithResult:NSNull.null];
   if (success == NO) {
     return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
   }
@@ -1031,7 +1073,7 @@ Status FBIDBServiceHandler::push(grpc::ServerContext *context, grpc::ServerReade
   const idb::PushRequest_Inner inner = request.inner();
 
   [[filepaths_from_reader(_commandExecutor.temporaryDirectory, reader, false, _target.logger) onQueue:_target.asyncQueue pop:^FBFuture<NSNull *> *(NSArray<NSURL *> *files) {
-    return [_commandExecutor push_files:files to_path:nsstring_from_c_string(inner.dst_path()) containerType:file_container(inner.container(), inner.bundle_id())];
+    return [_commandExecutor push_files:files to_path:nsstring_from_c_string(inner.dst_path()) containerType:file_container(inner.container())];
   }] block:&error];
   if (error) {
     return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
@@ -1044,7 +1086,7 @@ Status FBIDBServiceHandler::pull(ServerContext *context, const ::idb::PullReques
   NSString *path = nsstring_from_c_string(request->src_path());
   NSError *error = nil;
   if (request->dst_path().length() > 0) {
-    NSString *filePath = [[_commandExecutor pull_file_path:path destination_path:nsstring_from_c_string(request->dst_path()) containerType:file_container(request->container(), request->bundle_id()) ] block:&error];
+    NSString *filePath = [[_commandExecutor pull_file_path:path destination_path:nsstring_from_c_string(request->dst_path()) containerType:file_container(request->container()) ] block:&error];
     if (error) {
       return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
     }
@@ -1052,7 +1094,7 @@ Status FBIDBServiceHandler::pull(ServerContext *context, const ::idb::PullReques
   } else {
     NSURL *url = [_commandExecutor.temporaryDirectory temporaryDirectory];
     NSString *tempPath = [url.path stringByAppendingPathComponent:path.lastPathComponent];
-    NSString *filePath = [[_commandExecutor pull_file_path:path destination_path:tempPath containerType:file_container(request->container(), request->bundle_id())] block:&error];
+    NSString *filePath = [[_commandExecutor pull_file_path:path destination_path:tempPath containerType:file_container(request->container())] block:&error];
     if (error) {
       return Status(grpc::StatusCode::INTERNAL, error.localizedDescription.UTF8String);
     }

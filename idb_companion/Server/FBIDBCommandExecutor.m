@@ -21,6 +21,9 @@ FBFileContainerKind const FBFileContainerKindCrashes = @"crashes";
 FBFileContainerKind const FBFileContainerKindMedia = @"media";
 FBFileContainerKind const FBFileContainerKindRoot = @"root";
 FBFileContainerKind const FBFileContainerKindProvisioningProfiles = @"provisioning_profiles";
+FBFileContainerKind const FBFileContainerKindMDMProfiles = @"mdm_profiles";
+FBFileContainerKind const FBFileContainerKindSpringboardIcons = @"springboard_icons";
+FBFileContainerKind const FBFileContainerKindWallpaper = @"wallpaper";
 
 @interface FBIDBCommandExecutor ()
 
@@ -387,6 +390,15 @@ static const NSTimeInterval ListTestBundleTimeout = 60.0;
     }];
 }
 
+- (FBFuture<NSNull *> *)set_hardware_keyboard_enabled:(BOOL)enabled
+{
+  return [[self
+    settingsCommands]
+    onQueue:self.target.workQueue fmap:^(id<FBSimulatorSettingsCommands> commands) {
+      return [commands setHardwareKeyboardEnabled:enabled];
+    }];
+}
+
 #pragma mark File Commands
 
 - (FBFuture<NSNull *> *)move_paths:(NSArray<NSString *> *)originPaths to_path:(NSString *)destinationPath containerType:(NSString *)containerType
@@ -491,6 +503,23 @@ static const NSTimeInterval ListTestBundleTimeout = 60.0;
     }];
 }
 
+- (FBFuture<NSDictionary<NSString *, NSArray<NSString *> *> *> *)list_paths:(NSArray<NSString *> *)paths containerType:(NSString *)containerType
+{
+  return [[[self
+    applicationDataContainerCommands:containerType]
+    onQueue:self.target.workQueue pop:^FBFuture *(id<FBFileContainer> container) {
+      NSMutableArray<FBFuture<NSArray<NSString *> *> *> *futures = NSMutableArray.array;
+      for (NSString *path in paths) {
+        [futures addObject:[container contentsOfDirectory:path]];
+      }
+      return [FBFuture futureWithFutures:futures];
+    }]
+    onQueue:self.target.asyncQueue map:^ (NSArray<NSArray<NSString *> *> *listings) {
+      // Dictionary is constructed by attaching paths for ordering within array.
+      return [NSDictionary dictionaryWithObjects:listings forKeys:paths];
+    }];
+}
+
 #pragma mark Private Methods
 
 - (FBFutureContext<id<FBFileContainer>> *)applicationDataContainerCommands:(NSString *)containerType
@@ -512,6 +541,15 @@ static const NSTimeInterval ListTestBundleTimeout = 60.0;
   }
   if ([containerType isEqualToString:FBFileContainerKindProvisioningProfiles]) {
     return [commands fileCommandsForProvisioningProfiles];
+  }
+  if ([containerType isEqualToString:FBFileContainerKindMDMProfiles]) {
+    return [commands fileCommandsForMDMProfiles];
+  }
+  if ([containerType isEqualToString:FBFileContainerKindSpringboardIcons]) {
+    return [commands fileCommandsForSpringboardIconLayout];
+  }
+  if ([containerType isEqualToString:FBFileContainerKindWallpaper]) {
+    return [commands fileCommandsForWallpaper];
   }
   if (containerType == nil || containerType.length == 0) {
     // The Default for no, or null container for back-compat.

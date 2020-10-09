@@ -18,6 +18,7 @@
 #import "FBAMDServiceConnection.h"
 #import "FBAMRestorableDevice.h"
 #import "FBDeveloperDiskImage.h"
+#import "FBDeviceActivationCommands.h"
 #import "FBDeviceControlError.h"
 #import "FBDeviceControlFrameworkLoader.h"
 #import "FBDeviceLinkClient.h"
@@ -138,6 +139,11 @@ static void MountCallback(NSDictionary<NSString *, id> *callbackDictionary, FBAM
 - (AMRecoveryModeDeviceRef)recoveryModeDeviceRef
 {
   return NULL;
+}
+
+- (FBDeviceActivationState)activationState
+{
+  return FBDeviceActivationStateCoerceFromString(self.allValues[FBDeviceKeyActivationState]);
 }
 
 #pragma mark FBDeviceCommands Protocol Implementation

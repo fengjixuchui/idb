@@ -9,6 +9,10 @@
 
 #import "FBDevice.h"
 #import "FBAMDServiceConnection.h"
+#import "FBManagedConfigClient.h"
+#import "FBSpringboardServicesClient.h"
+
+static NSString *const DiagnosticsRelayService = @"com.apple.mobile.diagnostics_relay";
 
 @interface FBDeviceDiagnosticInformationCommands ()
 
@@ -45,11 +49,13 @@
     futureWithFutures:@[
       [self fetchInformationFromDiagnosticsRelay],
       [self fetchInformationFromSpringboard],
+      [self fetchInformationFromMobileConfiguration],
     ]]
     onQueue:self.device.asyncQueue map:^(NSArray<id> *results) {
       return @{
-        @"diag": results[0],
-        @"icon": results[1],
+        DiagnosticsRelayService: results[0],
+        FBSpringboardServiceName: results[1],
+        FBManagedConfigService: results[2],
       };
     }];
 }
@@ -59,8 +65,8 @@
 - (FBFuture<NSDictionary<NSString *, id> *> *)fetchInformationFromDiagnosticsRelay
 {
   return [[self.device
-    startService:@"com.apple.mobile.diagnostics_relay"]
-    onQueue:self.device.workQueue pop:^(FBAMDServiceConnection *connection) {
+    startService:DiagnosticsRelayService]
+    onQueue:self.device.asyncQueue pop:^(FBAMDServiceConnection *connection) {
       NSError *error = nil;
       NSDictionary<NSString *, id> *result = [connection sendAndReceiveMessage:@{@"Request": @"All"} error:&error];
       if (!result) {
@@ -75,18 +81,22 @@
     }];
 }
 
-- (FBFuture<NSArray<id> *> *)fetchInformationFromSpringboard
+- (FBFuture<IconLayoutType> *)fetchInformationFromSpringboard
 {
   return [[self.device
-    startService:@"com.apple.springboardservices"]
-    onQueue:self.device.workQueue pop:^(FBAMDServiceConnection *connection) {
-      NSError *error = nil;
-      NSArray<id> *result = [connection sendAndReceiveMessage:@{@"command": @"getIconState"} error:&error];
-      if (!result) {
-        return [FBFuture futureWithError:error];
-      }
-      result = [FBCollectionOperations recursiveFilteredJSONSerializableRepresentationOfArray:result];
-      return [FBFuture futureWithResult:result];
+    startService:FBSpringboardServiceName]
+    onQueue:self.device.asyncQueue pop:^(FBAMDServiceConnection *connection) {
+      FBSpringboardServicesClient *client = [FBSpringboardServicesClient springboardServicesClientWithConnection:connection logger:self.device.logger];
+      return [client getIconLayout];
+    }];
+}
+
+- (FBFuture<NSDictionary<NSString *, id> *> *)fetchInformationFromMobileConfiguration
+{
+  return [[self.device
+    startService:FBManagedConfigService]
+    onQueue:self.device.asyncQueue pop:^(FBAMDServiceConnection *connection) {
+      return [[FBManagedConfigClient managedConfigClientWithConnection:connection logger:self.device.logger] getCloudConfiguration];
     }];
 }
 
